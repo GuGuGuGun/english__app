@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.kaoyan.wordhelper.data.entity.Book
+import com.kaoyan.wordhelper.data.model.StudyRating
 import com.kaoyan.wordhelper.data.model.WordDraft
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.first
@@ -127,6 +128,64 @@ class M12AcceptanceTest {
     }
 
     @Test
+    fun importedBookRemainingCountDoesNotIncreaseAfterAgain() {
+        composeTestRule.waitForLearningWordCard()
+        val app = composeTestRule.activity.application as KaoyanWordApp
+        val originalBookId = runBlocking { app.database.bookDao().getActiveBook()?.id }
+        val originalLimit = runBlocking { app.settingsRepository.settingsFlow.first().newWordsLimit }
+        val baselineTodayLearned = runBlocking { app.repository.getTodayNewWordsCount() }
+        val boostedLimit = (baselineTodayLearned + 20).coerceIn(5, 500)
+        val importedBookName = "不认识计数回归_${System.currentTimeMillis()}"
+        val drafts = (1..80).map { index ->
+            WordDraft(
+                word = "again_word_$index",
+                meaning = "不认识释义$index"
+            )
+        }
+        val importedBookId = runBlocking {
+            app.settingsRepository.updateNewWordsLimit(boostedLimit)
+            app.repository.importBook(importedBookName, drafts)
+        }
+
+        try {
+            runBlocking {
+                app.repository.switchBook(importedBookId)
+            }
+            composeTestRule.waitUntil(timeoutMillis = 8_000) {
+                runCatching {
+                    composeTestRule.onNodeWithText(importedBookName, substring = true).assertIsDisplayed()
+                    true
+                }.getOrDefault(false)
+            }
+
+            val (beforeIndex, beforeTotal) = composeTestRule.readLearningProgress()
+            val beforeRemaining = (beforeTotal - beforeIndex).coerceAtLeast(0)
+
+            composeTestRule.onNodeWithTag("learning_action_again").performClick()
+
+            composeTestRule.waitUntil(timeoutMillis = 8_000) {
+                val (afterIndex, afterTotal) = composeTestRule.readLearningProgress()
+                val afterRemaining = (afterTotal - afterIndex).coerceAtLeast(0)
+                afterRemaining <= beforeRemaining
+            }
+            val (afterIndex, afterTotal) = composeTestRule.readLearningProgress()
+            val afterRemaining = (afterTotal - afterIndex).coerceAtLeast(0)
+            assertTrue(
+                "remaining count should not increase after AGAIN: before=$beforeRemaining after=$afterRemaining",
+                afterRemaining <= beforeRemaining
+            )
+        } finally {
+            runBlocking {
+                app.settingsRepository.updateNewWordsLimit(originalLimit)
+                if (originalBookId != null) {
+                    app.repository.switchBook(originalBookId)
+                }
+                app.repository.getBookById(importedBookId)?.let { app.repository.deleteBookWithData(it) }
+            }
+        }
+    }
+
+    @Test
     fun sharedProgressAcrossBooksForSameWord() {
         composeTestRule.waitForLearningWordCard()
         val app = composeTestRule.activity.application as KaoyanWordApp
@@ -184,6 +243,53 @@ class M12AcceptanceTest {
                 assertEquals("status should be shared", imported.status, preset.status)
                 assertEquals("reviewCount should be shared", imported.reviewCount, preset.reviewCount)
                 assertEquals("intervalDays should be shared", imported.intervalDays, preset.intervalDays)
+            }
+        } finally {
+            runBlocking {
+                if (originalBookId != null) {
+                    app.repository.switchBook(originalBookId)
+                }
+                app.repository.getBookById(importedBookId)?.let { app.repository.deleteBookWithData(it) }
+            }
+        }
+    }
+
+    @Test
+    fun importedBookInheritsLearnedProgressForExistingWord() {
+        composeTestRule.waitForLearningWordCard()
+        val app = composeTestRule.activity.application as KaoyanWordApp
+        val originalBookId = runBlocking { app.database.bookDao().getActiveBook()?.id }
+        val presetBookId = runBlocking {
+            app.database.bookDao().getAllBooksList().firstOrNull { it.type == Book.TYPE_PRESET }?.id
+        } ?: return
+
+        val targetWord = runBlocking {
+            val abandonId = app.database.wordDao().getWordIdByKey("abandon")
+            if (abandonId != null) {
+                app.repository.getWordById(abandonId)
+            } else {
+                app.repository.getWordsByBookList(presetBookId).firstOrNull()
+            }
+        } ?: return
+
+        val importedBookName = "继承已学回归_${System.currentTimeMillis()}"
+        val importedBookId = runBlocking {
+            app.repository.applyStudyResult(targetWord.id, presetBookId, StudyRating.GOOD)
+            app.repository.importBook(
+                name = importedBookName,
+                drafts = listOf(WordDraft(word = targetWord.word, meaning = "导入释义"))
+            )
+        }
+
+        try {
+            runBlocking {
+                val importedProgress = app.database.progressDao().getProgress(targetWord.id, importedBookId)
+                assertNotNull("imported progress should be synced from global progress", importedProgress)
+                val learnedCount = app.repository.getLearnedCount(importedBookId).first()
+                assertTrue(
+                    "learned count should include synced word: learned=$learnedCount",
+                    learnedCount >= 1
+                )
             }
         } finally {
             runBlocking {

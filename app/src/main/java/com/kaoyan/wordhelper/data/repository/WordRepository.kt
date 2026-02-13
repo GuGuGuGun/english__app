@@ -390,11 +390,18 @@ class WordRepository(private val database: AppDatabase) {
             .sortedBy { earlyOrder.getValue(it.id) }
             .filterNot { dueOrder.containsKey(it.id) }
 
+        // Keep "new word" slots stable for words that entered learning but are not completed yet.
+        // Without this, AGAIN can remove a word from new-word candidates and immediately backfill
+        // another unseen word, which makes "remaining count" increase unexpectedly.
+        val inLearningButUncompletedCount = progressList.count { progress ->
+            progress.status != Progress.STATUS_MASTERED && progress.reviewCount <= 0
+        }
+        val adjustedNewWordLimit = (newWordLimit - inLearningButUncompletedCount).coerceAtLeast(0)
         val progressIds = progressList.map { it.wordId }.toSet()
         val excludedIds = dueWords.map { it.id }.toSet() + earlyReviewWords.map { it.id }.toSet()
         val newWords = sourceWords
             .filter { it.id !in progressIds && it.id !in excludedIds }
-            .take(newWordLimit)
+            .take(adjustedNewWordLimit)
 
         return dueWords + earlyReviewWords + newWords
     }
@@ -564,10 +571,12 @@ class WordRepository(private val database: AppDatabase) {
     private suspend fun upsertDraftsForBook(bookId: Long, drafts: List<WordDraft>) {
         if (drafts.isEmpty()) return
         val contents = ArrayList<BookWordContent>(drafts.size)
+        val linkedWordIds = LinkedHashSet<Long>(drafts.size)
         drafts.forEach { draft ->
             val rawWord = draft.word.trim()
             if (rawWord.isBlank()) return@forEach
             val wordId = getOrCreateWordId(rawWord, draft.phonetic.trim())
+            linkedWordIds.add(wordId)
             contents.add(
                 BookWordContent(
                     wordId = wordId,
@@ -579,6 +588,33 @@ class WordRepository(private val database: AppDatabase) {
         }
         if (contents.isNotEmpty()) {
             wordDao.upsertBookWordContents(contents)
+            syncBookProgressWithGlobal(bookId, linkedWordIds)
+        }
+    }
+
+    private suspend fun syncBookProgressWithGlobal(bookId: Long, wordIds: Collection<Long>) {
+        if (wordIds.isEmpty()) return
+        val globalProgressByWordId = progressDao.getProgressByWordIds(wordIds.toList())
+            .groupBy { it.wordId }
+            .mapValues { (_, grouped) ->
+                grouped.maxWithOrNull(
+                    compareBy<Progress> { it.reviewCount }
+                        .thenBy { it.nextReviewTime }
+                        .thenBy { it.id }
+                )
+            }
+
+        globalProgressByWordId.forEach { (wordId, globalProgress) ->
+            val resolvedProgress = globalProgress ?: return@forEach
+            val existingByBook = progressDao.getProgress(wordId, bookId)
+            if (existingByBook != null) return@forEach
+            progressDao.insert(
+                resolvedProgress.copy(
+                    id = 0,
+                    wordId = wordId,
+                    bookId = bookId
+                )
+            )
         }
     }
 
