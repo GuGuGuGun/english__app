@@ -26,6 +26,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.kaoyan.wordhelper.ui.screen.BookBuildGuideScreen
 import com.kaoyan.wordhelper.ui.screen.BookManageScreen
+import com.kaoyan.wordhelper.ui.screen.AILabScreen
 import com.kaoyan.wordhelper.ui.screen.LearningMode
 import com.kaoyan.wordhelper.ui.screen.LearningScreen
 import com.kaoyan.wordhelper.ui.screen.ProfileScreen
@@ -37,6 +38,7 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     data object Search : Screen("search", "查词", Icons.Filled.Search)
     data object BookManage : Screen("book_manage", "词库", Icons.Outlined.LibraryBooks)
     data object Profile : Screen("profile", "我的", Icons.Filled.Person)
+    data object AILab : Screen("ai_lab", "AI实验室", Icons.Filled.Person)
     data object Stats : Screen("stats", "学习数据", Icons.Filled.MenuBook)
     data object BookBuildGuide : Screen("book_build_guide", "词书构建教程", Icons.Outlined.LibraryBooks)
 }
@@ -61,6 +63,7 @@ fun AppNavigation() {
                                 Screen.Search -> "tab_search"
                                 Screen.BookManage -> "tab_book_manage"
                                 Screen.Profile -> "tab_profile"
+                                Screen.AILab -> "tab_ai_lab"
                                 Screen.Stats -> "tab_stats"
                                 Screen.BookBuildGuide -> "tab_book_build_guide"
                             }
@@ -110,7 +113,13 @@ fun AppNavigation() {
                 )
             }
             composable(Screen.Profile.route) {
-                ProfileScreen(onOpenStats = { navController.navigate(Screen.Stats.route) })
+                ProfileScreen(
+                    onOpenStats = { navController.navigate(Screen.Stats.route) },
+                    onOpenAiLab = { navController.navigate(Screen.AILab.route) }
+                )
+            }
+            composable(Screen.AILab.route) {
+                AILabScreen(onBack = { navController.popBackStack() })
             }
             composable(Screen.Stats.route) {
                 StatsScreen(onBack = { navController.popBackStack() })

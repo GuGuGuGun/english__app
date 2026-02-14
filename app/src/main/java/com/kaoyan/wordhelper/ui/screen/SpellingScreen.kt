@@ -24,9 +24,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -36,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -52,6 +55,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import com.kaoyan.wordhelper.data.entity.Word
 import com.kaoyan.wordhelper.data.model.SpellingOutcome
+import com.kaoyan.wordhelper.ui.component.AIGeneratedBadge
 import com.kaoyan.wordhelper.ui.theme.AlertRed
 import com.kaoyan.wordhelper.ui.theme.KnownGreen
 import com.kaoyan.wordhelper.util.SpellingEvaluator
@@ -63,6 +67,11 @@ fun SpellingScreen(
     isSubmitting: Boolean,
     onSpellingResolved: (SpellingOutcome, Int, Long) -> Unit,
     onContinueAfterFailure: () -> Unit,
+    aiAssistAvailable: Boolean = false,
+    aiAssistLoading: Boolean = false,
+    aiAssistText: String? = null,
+    aiAssistError: String? = null,
+    onRequestAiAssist: (forceRefresh: Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (word == null) {
@@ -89,6 +98,7 @@ fun SpellingScreen(
     val usedHint = showFirstHint || showLengthHint
     val canEditInput = !isSubmitting && status != SpellingStatus.CopyRequired
     val canUseHints = !isSubmitting && status != SpellingStatus.CopyRequired
+    val canShowAiAssistAction = status == SpellingStatus.Wrong || status == SpellingStatus.CopyRequired
 
     fun submit() {
         if (isSubmitting || status == SpellingStatus.CopyRequired) return
@@ -387,6 +397,16 @@ fun SpellingScreen(
                     ) {
                         Text(text = "继续")
                     }
+                    if (canShowAiAssistAction) {
+                        SpellingAIAssistSection(
+                            aiAssistAvailable = aiAssistAvailable,
+                            aiAssistLoading = aiAssistLoading,
+                            aiAssistText = aiAssistText,
+                            aiAssistError = aiAssistError,
+                            onRequestAiAssist = onRequestAiAssist,
+                            enabled = !isSubmitting
+                        )
+                    }
                 } else {
                     OutlinedTextField(
                         value = input,
@@ -439,6 +459,16 @@ fun SpellingScreen(
                     ) {
                         Text(text = buttonText)
                     }
+                    if (canShowAiAssistAction) {
+                        SpellingAIAssistSection(
+                            aiAssistAvailable = aiAssistAvailable,
+                            aiAssistLoading = aiAssistLoading,
+                            aiAssistText = aiAssistText,
+                            aiAssistError = aiAssistError,
+                            onRequestAiAssist = onRequestAiAssist,
+                            enabled = !isSubmitting
+                        )
+                    }
                 }
             }
         }
@@ -473,6 +503,100 @@ private fun SpellingMatchIndicator(input: String, target: String) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+@Composable
+private fun SpellingAIAssistSection(
+    aiAssistAvailable: Boolean,
+    aiAssistLoading: Boolean,
+    aiAssistText: String?,
+    aiAssistError: String?,
+    onRequestAiAssist: (forceRefresh: Boolean) -> Unit,
+    enabled: Boolean
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = { onRequestAiAssist(!aiAssistText.isNullOrBlank()) },
+                enabled = aiAssistAvailable && enabled && !aiAssistLoading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("spelling_ai_memory")
+            ) {
+                if (aiAssistLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.padding(end = 6.dp).height(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Text(text = "正在生成 AI 助记...")
+                } else {
+                    Text(text = if (aiAssistText.isNullOrBlank()) "AI 助记" else "重新生成 AI 助记")
+                }
+            }
+
+            if (!aiAssistAvailable) {
+                Text(
+                    text = "AI 未启用或未配置，请前往“我的 - AI 实验室”设置。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (!aiAssistError.isNullOrBlank()) {
+                Text(
+                    text = aiAssistError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AlertRed
+                )
+            }
+
+            if (!aiAssistText.isNullOrBlank()) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "AI 助记",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = aiAssistText,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "内容由 AI 生成，请甄别参考。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    AIGeneratedBadge(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 8.dp, end = 8.dp)
+                            .testTag("spelling_ai_badge")
+                    )
+                }
+            }
+        }
     }
 }
 

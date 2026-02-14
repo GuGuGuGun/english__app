@@ -16,7 +16,7 @@ import org.junit.runner.RunWith
 class MigrationTest {
 
     @Test
-    fun migrate1To6_preservesProgressData() {
+    fun migrate1To7_preservesProgressData() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.deleteDatabase(TEST_DB)
         createVersion1Database(context)
@@ -27,7 +27,8 @@ class MigrationTest {
                 AppDatabase.MIGRATION_2_3,
                 AppDatabase.MIGRATION_3_4,
                 AppDatabase.MIGRATION_4_5,
-                AppDatabase.MIGRATION_5_6
+                AppDatabase.MIGRATION_5_6,
+                AppDatabase.MIGRATION_6_7
             )
             .build()
 
@@ -47,6 +48,13 @@ class MigrationTest {
 
         migratedDb.query(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tb_book_word_content'"
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(1, cursor.getInt(0))
+        }
+
+        migratedDb.query(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tb_ai_cache'"
         ).use { cursor ->
             assertTrue(cursor.moveToFirst())
             assertEquals(1, cursor.getInt(0))

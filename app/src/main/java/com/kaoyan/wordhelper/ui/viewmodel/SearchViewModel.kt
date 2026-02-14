@@ -14,7 +14,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -26,11 +29,36 @@ data class SearchWordItem(
     val progress: Progress?
 )
 
+data class SentenceAnalysis(
+    val mainClause: String,
+    val grammarBreakdown: String,
+    val chineseTranslation: String
+)
+
+data class SearchSentenceAiState(
+    val isEnabled: Boolean = false,
+    val isConfigured: Boolean = false,
+    val isSentenceMode: Boolean = false,
+    val isLoading: Boolean = false,
+    val sourceText: String = "",
+    val analysis: SentenceAnalysis? = null,
+    val error: String? = null
+) {
+    val isAvailable: Boolean
+        get() = isEnabled && isConfigured
+}
+
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = (application as KaoyanWordApp).repository
+    private val app = application as KaoyanWordApp
+    private val repository = app.repository
+    private val aiConfigRepository = app.aiConfigRepository
+    private val aiRepository = app.aiRepository
 
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
+    private val _sentenceAiState = MutableStateFlow(SearchSentenceAiState())
+    val sentenceAiState: StateFlow<SearchSentenceAiState> = _sentenceAiState.asStateFlow()
+    private var lastAnalyzedSentence: String? = null
 
     private val activeBookFlow: Flow<Book?> = repository.getActiveBookFlow()
 
@@ -65,8 +93,31 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    init {
+        observeSentenceMode()
+        refreshSentenceAiAvailability()
+    }
+
     fun updateQuery(text: String) {
         _query.value = text
+    }
+
+    fun refreshSentenceAiAvailability() {
+        viewModelScope.launch {
+            val config = aiConfigRepository.getConfig()
+            _sentenceAiState.value = _sentenceAiState.value.copy(
+                isEnabled = config.enabled,
+                isConfigured = config.isConfigured()
+            )
+        }
+    }
+
+    fun retrySentenceAnalysis(forceRefresh: Boolean = false) {
+        val sentence = _query.value.trim()
+        if (sentence.length <= SENTENCE_MODE_THRESHOLD) return
+        viewModelScope.launch {
+            analyzeSentence(sentence = sentence, forceRefresh = forceRefresh)
+        }
     }
 
     fun toggleNewWord(word: Word, isInNewWords: Boolean) {
@@ -77,5 +128,182 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 repository.addToNewWords(word.id)
             }
         }
+    }
+
+    private fun observeSentenceMode() {
+        viewModelScope.launch {
+            _query
+                .debounce(350)
+                .map { it.trim() }
+                .distinctUntilChanged()
+                .collectLatest { normalized ->
+                    if (normalized.length <= SENTENCE_MODE_THRESHOLD) {
+                        lastAnalyzedSentence = null
+                        _sentenceAiState.value = _sentenceAiState.value.copy(
+                            isSentenceMode = false,
+                            isLoading = false,
+                            sourceText = "",
+                            analysis = null,
+                            error = null
+                        )
+                        return@collectLatest
+                    }
+                    analyzeSentence(sentence = normalized, forceRefresh = false)
+                }
+        }
+    }
+
+    private suspend fun analyzeSentence(sentence: String, forceRefresh: Boolean) {
+        val config = aiConfigRepository.getConfig()
+        val enabled = config.enabled
+        val configured = config.isConfigured()
+        _sentenceAiState.value = _sentenceAiState.value.copy(
+            isSentenceMode = true,
+            sourceText = sentence,
+            isEnabled = enabled,
+            isConfigured = configured
+        )
+        if (!enabled || !configured) {
+            _sentenceAiState.value = _sentenceAiState.value.copy(
+                isLoading = false,
+                analysis = null,
+                error = "请先在 AI 实验室启用并配置 API Key"
+            )
+            return
+        }
+
+        val state = _sentenceAiState.value
+        if (!forceRefresh &&
+            lastAnalyzedSentence == sentence &&
+            state.analysis != null &&
+            state.error.isNullOrBlank() &&
+            !state.isLoading
+        ) {
+            return
+        }
+
+        _sentenceAiState.value = state.copy(
+            isSentenceMode = true,
+            sourceText = sentence,
+            isEnabled = enabled,
+            isConfigured = configured,
+            isLoading = true,
+            error = null
+        )
+
+        val result = withContext(Dispatchers.IO) {
+            aiRepository.analyzeSentence(sentence = sentence, forceRefresh = forceRefresh)
+        }
+        result.fold(
+            onSuccess = { content ->
+                lastAnalyzedSentence = sentence
+                _sentenceAiState.value = _sentenceAiState.value.copy(
+                    isLoading = false,
+                    analysis = parseSentenceAnalysis(content),
+                    error = null
+                )
+            },
+            onFailure = { throwable ->
+                _sentenceAiState.value = _sentenceAiState.value.copy(
+                    isLoading = false,
+                    analysis = null,
+                    error = throwable.message ?: "句子解析失败"
+                )
+            }
+        )
+    }
+
+    private fun parseSentenceAnalysis(rawContent: String): SentenceAnalysis {
+        val normalized = rawContent.replace("\r\n", "\n").trim()
+        if (normalized.isBlank()) {
+            return SentenceAnalysis(
+                mainClause = "未识别到句子主干，请重试。",
+                grammarBreakdown = "未识别到语法成分，请重试。",
+                chineseTranslation = "未识别到中文翻译，请重试。"
+            )
+        }
+
+        val headings = SENTENCE_SECTION_PATTERN.findAll(normalized).toList()
+        if (headings.isNotEmpty()) {
+            var mainClause = ""
+            var grammarBreakdown = ""
+            var chineseTranslation = ""
+            headings.forEachIndexed { index, match ->
+                val label = match.groupValues[1]
+                val start = match.range.last + 1
+                val end = if (index < headings.lastIndex) {
+                    headings[index + 1].range.first
+                } else {
+                    normalized.length
+                }
+                val sectionContent = normalized.substring(start, end)
+                    .trim()
+                    .trimStart('-', '•', '*', ' ')
+                    .trim()
+                when {
+                    label.contains("主干") && mainClause.isBlank() -> {
+                        mainClause = sectionContent
+                    }
+
+                    label.contains("翻译") && chineseTranslation.isBlank() -> {
+                        chineseTranslation = sectionContent
+                    }
+
+                    grammarBreakdown.isBlank() -> {
+                        grammarBreakdown = sectionContent
+                    }
+                }
+            }
+            if (mainClause.isBlank()) {
+                mainClause = "未识别到句子主干，请重试。"
+            }
+            if (grammarBreakdown.isBlank()) {
+                grammarBreakdown = normalized
+            }
+            if (chineseTranslation.isBlank()) {
+                chineseTranslation = extractLikelyTranslation(normalized)
+                    .ifBlank { "未识别到中文翻译，请重试。" }
+            }
+            return SentenceAnalysis(
+                mainClause = mainClause,
+                grammarBreakdown = grammarBreakdown,
+                chineseTranslation = chineseTranslation
+            )
+        }
+
+        val blocks = normalized
+            .split(Regex("""\n\s*\n"""))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        val mainClause = blocks.firstOrNull().orEmpty().ifBlank { "未识别到句子主干，请重试。" }
+        val grammarBreakdown = when {
+            blocks.size >= 3 -> blocks.subList(1, blocks.lastIndex).joinToString("\n\n")
+            blocks.size == 2 -> blocks[1]
+            else -> normalized
+        }.ifBlank { normalized }
+        val chineseTranslation = extractLikelyTranslation(normalized).ifBlank {
+            blocks.lastOrNull().orEmpty().ifBlank { "未识别到中文翻译，请重试。" }
+        }
+        return SentenceAnalysis(
+            mainClause = mainClause,
+            grammarBreakdown = grammarBreakdown,
+            chineseTranslation = chineseTranslation
+        )
+    }
+
+    private fun extractLikelyTranslation(content: String): String {
+        return content
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .lastOrNull { line -> line.any { it in '\u4e00'..'\u9fff' } }
+            .orEmpty()
+    }
+
+    companion object {
+        const val SENTENCE_MODE_THRESHOLD = 20
+        private val SENTENCE_SECTION_PATTERN = Regex(
+            """(?m)^\s*(?:#{1,3}\s*)?[【\[]?(句子主干|主干|语法成分标注|语法成分|语法拆解|语法分析|中文翻译|翻译)[】\]]?\s*[:：]?\s*$"""
+        )
     }
 }

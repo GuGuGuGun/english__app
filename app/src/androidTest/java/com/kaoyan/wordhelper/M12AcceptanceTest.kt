@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.kaoyan.wordhelper.data.entity.Book
+import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.data.model.StudyRating
 import com.kaoyan.wordhelper.data.model.WordDraft
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -40,6 +41,30 @@ class M12AcceptanceTest {
         composeTestRule.onNodeWithTag("spelling_input").performTextInput("zzzz")
         composeTestRule.onNodeWithTag("spelling_submit").performClick()
         composeTestRule.onNodeWithTag("spelling_input").assertIsDisplayed()
+    }
+
+    @Test
+    fun learningAiBulbShowsGuideWhenNotConfigured() {
+        val app = composeTestRule.activity.application as KaoyanWordApp
+        val originalConfig = runBlocking { app.aiConfigRepository.getConfig() }
+        try {
+            runBlocking {
+                app.aiConfigRepository.saveConfig(
+                    originalConfig.copy(
+                        enabled = false,
+                        apiKey = ""
+                    )
+                )
+            }
+            composeTestRule.activityRule.scenario.recreate()
+            composeTestRule.waitForLearningWordCard()
+            composeTestRule.onNodeWithTag("learning_ai_bulb").assertIsDisplayed().performClick()
+            composeTestRule.onNodeWithTag("learning_ai_guide_confirm").assertIsDisplayed()
+        } finally {
+            runBlocking {
+                app.aiConfigRepository.saveConfig(originalConfig)
+            }
+        }
     }
 
     @Test
@@ -190,17 +215,25 @@ class M12AcceptanceTest {
         composeTestRule.waitForLearningWordCard()
         val app = composeTestRule.activity.application as KaoyanWordApp
         val originalBookId = runBlocking { app.database.bookDao().getActiveBook()?.id }
+        val originalLimit = runBlocking { app.settingsRepository.settingsFlow.first().newWordsLimit }
+        val baselineTodayLearned = runBlocking { app.repository.getTodayNewWordsCount() }
+        val boostedLimit = (baselineTodayLearned + 10).coerceIn(5, 500)
         val presetBookId = runBlocking {
             app.database.bookDao().getAllBooksList().firstOrNull { it.type == Book.TYPE_PRESET }?.id
+        } ?: return
+        val targetWord = runBlocking {
+            app.repository.getWordsByBookList(presetBookId).firstOrNull()
         } ?: return
 
         val importedBookName = "共享进度回归_${System.currentTimeMillis()}"
         val importedBookId = runBlocking {
+            app.settingsRepository.updateNewWordsLimit(boostedLimit)
             app.repository.importBook(
                 name = importedBookName,
-                drafts = listOf(WordDraft(word = "abandon", meaning = "导入释义"))
+                drafts = listOf(WordDraft(word = targetWord.word, meaning = "导入释义"))
             )
         }
+        val targetWordKey = targetWord.word.trim().lowercase()
 
         try {
             runBlocking {
@@ -213,10 +246,30 @@ class M12AcceptanceTest {
                 }.getOrDefault(false)
             }
 
+            runBlocking {
+                val wordId = app.database.wordDao().getWordIdByKey(targetWordKey) ?: return@runBlocking
+                val resetProgressRows = app.database.progressDao().getProgressByWordIds(listOf(wordId))
+                resetProgressRows.forEach { progress ->
+                    app.database.progressDao().update(
+                        progress.copy(
+                            status = Progress.STATUS_NEW,
+                            repetitions = 0,
+                            intervalDays = 0,
+                            nextReviewTime = 0L,
+                            easeFactor = 2.5f,
+                            reviewCount = 0,
+                            spellCorrectCount = 0,
+                            spellWrongCount = 0
+                        )
+                    )
+                }
+            }
+            composeTestRule.waitForLearningWordCard()
+            composeTestRule.waitForLearningActionButtons()
             composeTestRule.onNodeWithTag("learning_action_good").performClick()
             composeTestRule.waitUntil(timeoutMillis = 8_000) {
                 runBlocking {
-                    val wordId = app.database.wordDao().getWordIdByKey("abandon")
+                    val wordId = app.database.wordDao().getWordIdByKey(targetWordKey)
                     if (wordId == null) {
                         false
                     } else {
@@ -231,8 +284,8 @@ class M12AcceptanceTest {
             }
 
             runBlocking {
-                val wordId = app.database.wordDao().getWordIdByKey("abandon")
-                assertNotNull("wordId should exist for abandon", wordId)
+                val wordId = app.database.wordDao().getWordIdByKey(targetWordKey)
+                assertNotNull("wordId should exist for target word: $targetWordKey", wordId)
                 val safeWordId = wordId ?: return@runBlocking
                 val importedProgress = app.database.progressDao().getProgress(safeWordId, importedBookId)
                 val presetProgress = app.database.progressDao().getProgress(safeWordId, presetBookId)
@@ -246,6 +299,7 @@ class M12AcceptanceTest {
             }
         } finally {
             runBlocking {
+                app.settingsRepository.updateNewWordsLimit(originalLimit)
                 if (originalBookId != null) {
                     app.repository.switchBook(originalBookId)
                 }
@@ -420,6 +474,17 @@ private fun ComposeTestRule.waitForLearningWordCard() {
         onAllNodesWithTag("learning_word_card").fetchSemanticsNodes().isNotEmpty()
     }
     onNodeWithTag("learning_word_card").assertIsDisplayed()
+}
+
+private fun ComposeTestRule.waitForLearningActionButtons() {
+    waitUntil(timeoutMillis = 8_000) {
+        runCatching {
+            onNodeWithTag("learning_action_again").assertIsDisplayed()
+            onNodeWithTag("learning_action_hard").assertIsDisplayed()
+            onNodeWithTag("learning_action_good").assertIsDisplayed()
+            true
+        }.getOrDefault(false)
+    }
 }
 
 private fun ComposeTestRule.readLearningProgressIndex(): Int {

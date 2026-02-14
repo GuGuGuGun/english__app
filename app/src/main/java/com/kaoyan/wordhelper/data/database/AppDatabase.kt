@@ -14,6 +14,8 @@ import com.kaoyan.wordhelper.data.dao.NewWordRefDao
 import com.kaoyan.wordhelper.data.dao.ProgressDao
 import com.kaoyan.wordhelper.data.dao.StudyLogDao
 import com.kaoyan.wordhelper.data.dao.WordDao
+import com.kaoyan.wordhelper.data.dao.AICacheDao
+import com.kaoyan.wordhelper.data.entity.AICache
 import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.entity.BookWordContent
 import com.kaoyan.wordhelper.data.entity.DailyStats
@@ -37,9 +39,10 @@ import kotlinx.coroutines.launch
         NewWordRef::class,
         StudyLog::class,
         DailyStats::class,
-        EarlyReviewRef::class
+        EarlyReviewRef::class,
+        AICache::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -51,6 +54,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun studyLogDao(): StudyLogDao
     abstract fun dailyStatsDao(): DailyStatsDao
     abstract fun earlyReviewDao(): EarlyReviewDao
+    abstract fun aiCacheDao(): AICacheDao
 
     companion object {
         @Volatile
@@ -73,7 +77,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_2_3,
                     MIGRATION_3_4,
                     MIGRATION_4_5,
-                    MIGRATION_5_6
+                    MIGRATION_5_6,
+                    MIGRATION_6_7
                 )
                 .build()
         }
@@ -382,6 +387,31 @@ abstract class AppDatabase : RoomDatabase() {
 
                 db.execSQL("DROP TABLE tb_word_id_map")
                 db.execSQL("DROP TABLE tb_word_legacy")
+            }
+        }
+
+        @VisibleForTesting
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS tb_ai_cache (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        word_id INTEGER,
+                        query_content TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        ai_content TEXT NOT NULL,
+                        model_name TEXT NOT NULL,
+                        created_at INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_tb_ai_cache_word_id_type ON tb_ai_cache(word_id, type)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_tb_ai_cache_query_content_type ON tb_ai_cache(query_content, type)"
+                )
             }
         }
 

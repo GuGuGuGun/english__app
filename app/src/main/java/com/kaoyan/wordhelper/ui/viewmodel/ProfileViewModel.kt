@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kaoyan.wordhelper.KaoyanWordApp
 import com.kaoyan.wordhelper.data.model.DailyStatsAggregate
+import com.kaoyan.wordhelper.data.model.AIPresets
 import com.kaoyan.wordhelper.data.repository.DarkMode
 import com.kaoyan.wordhelper.data.repository.UserSettings
 import com.kaoyan.wordhelper.util.DatabaseBackupManager
@@ -30,9 +31,16 @@ data class ProfileStats(
     val heatmap: List<HeatmapCell>
 )
 
+data class AiLabSummary(
+    val status: String = "未配置 API Key",
+    val enabled: Boolean = false,
+    val isConfigured: Boolean = false
+)
+
 class ProfileViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as KaoyanWordApp).repository
     private val settingsRepository = (application as KaoyanWordApp).settingsRepository
+    private val aiConfigRepository = (application as KaoyanWordApp).aiConfigRepository
     private val database = (application as KaoyanWordApp).database
 
     val settings: StateFlow<UserSettings> = settingsRepository.settingsFlow
@@ -59,6 +67,12 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
+    private val _aiLabSummary = MutableStateFlow(AiLabSummary())
+    val aiLabSummary: StateFlow<AiLabSummary> = _aiLabSummary.asStateFlow()
+
+    init {
+        refreshAiSummary()
+    }
 
     fun updateNewWordsLimit(limit: Int) {
         viewModelScope.launch {
@@ -116,6 +130,25 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearMessage() {
         _message.value = null
+    }
+
+    fun refreshAiSummary() {
+        viewModelScope.launch {
+            val config = aiConfigRepository.getConfig()
+            val hasApiKey = config.apiKey.isNotBlank()
+            val providerName = AIPresets.inferProviderName(config.apiBaseUrl)
+            val status = when {
+                !hasApiKey -> "未配置 API Key"
+                !config.enabled -> "已配置（未启用）"
+                providerName == AIPresets.CUSTOM_NAME -> "已启用"
+                else -> "$providerName 已启用"
+            }
+            _aiLabSummary.value = AiLabSummary(
+                status = status,
+                enabled = config.enabled,
+                isConfigured = hasApiKey
+            )
+        }
     }
 
     private fun buildStats(

@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -24,6 +25,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
@@ -36,19 +38,27 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kaoyan.wordhelper.ui.component.AIGeneratedBadge
 import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.ui.component.AnimatedStarToggle
+import com.kaoyan.wordhelper.ui.viewmodel.SearchSentenceAiState
 import com.kaoyan.wordhelper.ui.viewmodel.SearchViewModel
 import com.kaoyan.wordhelper.ui.viewmodel.SearchWordItem
 import com.kaoyan.wordhelper.util.DateUtils
+
 @OptIn(ExperimentalMaterial3Api::class)
 
 @Composable
 fun SearchScreen(viewModel: SearchViewModel = viewModel()) {
     val query by viewModel.query.collectAsStateWithLifecycle()
     val results by viewModel.results.collectAsStateWithLifecycle()
+    val sentenceAiState by viewModel.sentenceAiState.collectAsStateWithLifecycle()
     var selectedWordId by remember { mutableStateOf<Long?>(null) }
     val selectedItem = results.firstOrNull { it.word.id == selectedWordId }
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshSentenceAiAvailability()
+    }
 
     if (selectedItem != null) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -73,14 +83,21 @@ fun SearchScreen(viewModel: SearchViewModel = viewModel()) {
             value = query,
             onValueChange = viewModel::updateQuery,
             leadingIcon = { Icon(imageVector = Icons.Filled.Search, contentDescription = null) },
-            placeholder = { Text(text = "搜索单词") },
+            placeholder = { Text(text = "搜索单词，或粘贴长难句（>20 字符自动解析）") },
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("search_input"),
-            singleLine = true
+            singleLine = !sentenceAiState.isSentenceMode,
+            maxLines = if (sentenceAiState.isSentenceMode) 4 else 1
         )
 
-        if (results.isEmpty() && query.isNotBlank()) {
+        SearchSentenceAnalysisPanel(
+            state = sentenceAiState,
+            onRetry = { viewModel.retrySentenceAnalysis(forceRefresh = false) },
+            onForceRefresh = { viewModel.retrySentenceAnalysis(forceRefresh = true) }
+        )
+
+        if (!sentenceAiState.isSentenceMode && results.isEmpty() && query.isNotBlank()) {
             Text(text = "没有匹配结果", style = MaterialTheme.typography.bodySmall)
         }
 
@@ -92,6 +109,142 @@ fun SearchScreen(viewModel: SearchViewModel = viewModel()) {
                     onClick = { selectedWordId = item.word.id }
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun SearchSentenceAnalysisPanel(
+    state: SearchSentenceAiState,
+    onRetry: () -> Unit,
+    onForceRefresh: () -> Unit
+) {
+    if (!state.isSentenceMode) return
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("search_sentence_panel")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(text = "句子解析模式", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "输入超过 20 个字符后会自动触发 AI 解析，不影响单词检索。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            when {
+                state.isLoading -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .testTag("search_sentence_loading"),
+                            strokeWidth = 2.dp
+                        )
+                        Text(
+                            text = "正在解析长难句...",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+
+                !state.error.isNullOrBlank() -> {
+                    Text(
+                        text = state.error ?: "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("search_sentence_error")
+                    )
+                    if (state.isAvailable) {
+                        Button(
+                            onClick = onRetry,
+                            modifier = Modifier.testTag("search_sentence_retry")
+                        ) {
+                            Text(text = "重试")
+                        }
+                    }
+                }
+
+                state.analysis != null -> {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        AIGeneratedBadge(modifier = Modifier.testTag("search_sentence_ai_badge"))
+                    }
+                    SentenceAnalysisSectionCard(
+                        title = "句子主干",
+                        content = state.analysis.mainClause,
+                        testTag = "search_sentence_main"
+                    )
+                    SentenceAnalysisSectionCard(
+                        title = "语法成分标注",
+                        content = state.analysis.grammarBreakdown,
+                        testTag = "search_sentence_grammar"
+                    )
+                    SentenceAnalysisSectionCard(
+                        title = "中文翻译",
+                        content = state.analysis.chineseTranslation,
+                        testTag = "search_sentence_translation"
+                    )
+                    Button(
+                        onClick = onForceRefresh,
+                        enabled = !state.isLoading,
+                        modifier = Modifier.testTag("search_sentence_regenerate")
+                    ) {
+                        Text(text = "重新解析")
+                    }
+                    Text(
+                        text = "内容由 AI 生成，请甄别参考。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                else -> {
+                    val hint = if (state.isAvailable) {
+                        "等待解析结果..."
+                    } else {
+                        "请先在 AI 实验室启用并配置 API Key。"
+                    }
+                    Text(
+                        text = hint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("search_sentence_hint")
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SentenceAnalysisSectionCard(
+    title: String,
+    content: String,
+    testTag: String
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(text = title, style = MaterialTheme.typography.titleSmall)
+            Text(text = content, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

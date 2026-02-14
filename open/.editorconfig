@@ -1,0 +1,6 @@
+root = true
+
+[*.{kt,kts,md,xml,txt,gradle,properties,json,csv}]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true

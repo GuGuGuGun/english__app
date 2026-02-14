@@ -47,6 +47,7 @@ import com.kaoyan.wordhelper.data.repository.DarkMode
 import com.kaoyan.wordhelper.ui.component.HeatmapGrid
 import com.kaoyan.wordhelper.ui.component.HeatmapLegend
 import com.kaoyan.wordhelper.ui.component.MemoryLineChart
+import com.kaoyan.wordhelper.ui.viewmodel.AiLabSummary
 import com.kaoyan.wordhelper.ui.viewmodel.ProfileViewModel
 import com.kaoyan.wordhelper.ui.viewmodel.ProfileStats
 import java.time.LocalDate
@@ -56,10 +57,12 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel = viewModel(),
-    onOpenStats: () -> Unit = {}
+    onOpenStats: () -> Unit = {},
+    onOpenAiLab: () -> Unit = {}
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val stats by viewModel.stats.collectAsStateWithLifecycle()
+    val aiLabSummary by viewModel.aiLabSummary.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -85,6 +88,10 @@ fun ProfileScreen(
             Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
             viewModel.clearMessage()
         }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshAiSummary()
     }
 
     if (pendingRestoreUri != null) {
@@ -115,7 +122,8 @@ fun ProfileScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .testTag("profile_list"),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
@@ -135,6 +143,12 @@ fun ProfileScreen(
                     onNewWordsLimitChange = viewModel::updateNewWordsLimit,
                     onFontScaleChange = viewModel::updateFontScale,
                     onDarkModeChange = viewModel::updateDarkMode
+                )
+            }
+            item {
+                AiLabEntryCard(
+                    summary = aiLabSummary,
+                    onOpenAiLab = onOpenAiLab
                 )
             }
             item {
@@ -342,6 +356,32 @@ private fun <T> SettingRow(
                     label = { Text(text = label) },
                     modifier = if (tag != null) Modifier.testTag(tag) else Modifier
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiLabEntryCard(
+    summary: AiLabSummary,
+    onOpenAiLab: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(text = "AI 实验室", style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = summary.status,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedButton(
+                onClick = onOpenAiLab,
+                modifier = Modifier.testTag("profile_open_ai_lab")
+            ) {
+                Text(text = "进入设置")
             }
         }
     }

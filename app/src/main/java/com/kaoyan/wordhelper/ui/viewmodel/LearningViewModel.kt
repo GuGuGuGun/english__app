@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kaoyan.wordhelper.KaoyanWordApp
 import com.kaoyan.wordhelper.data.entity.Book
+import com.kaoyan.wordhelper.data.model.AIContentType
 import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.data.entity.Word
 import com.kaoyan.wordhelper.data.model.SpellingOutcome
@@ -25,10 +26,24 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
+data class LearningAiState(
+    val isEnabled: Boolean = false,
+    val isConfigured: Boolean = false,
+    val isLoading: Boolean = false,
+    val activeType: AIContentType? = null,
+    val content: String = "",
+    val error: String? = null
+) {
+    val isAvailable: Boolean
+        get() = isEnabled && isConfigured
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class LearningViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as KaoyanWordApp).repository
     private val settingsRepository = (application as KaoyanWordApp).settingsRepository
+    private val aiConfigRepository = (application as KaoyanWordApp).aiConfigRepository
+    private val aiRepository = (application as KaoyanWordApp).aiRepository
 
     private val immediateRetryQueue = ArrayDeque<Word>()
     private var queueBookId: Long? = null
@@ -40,6 +55,10 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     val message: StateFlow<String?> = _message.asStateFlow()
     private val _dueReviewCount = MutableStateFlow(0)
     val dueReviewCount: StateFlow<Int> = _dueReviewCount.asStateFlow()
+    private val _aiState = MutableStateFlow(LearningAiState())
+    val aiState: StateFlow<LearningAiState> = _aiState.asStateFlow()
+    private val _memoryAidSuggestionWordId = MutableStateFlow<Long?>(null)
+    val memoryAidSuggestionWordId: StateFlow<Long?> = _memoryAidSuggestionWordId.asStateFlow()
 
 
     val books: StateFlow<List<Book>> = repository.getAllBooks()
@@ -105,6 +124,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     init {
+        refreshAiAvailability()
         viewModelScope.launch {
             combine(activeBook, newWordsLimit) { book, limit -> book to limit }
                 .collect { (book, limit) ->
@@ -174,7 +194,9 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             }
             if (rating == StudyRating.AGAIN) {
                 enqueueImmediateRetry(word)
+                _memoryAidSuggestionWordId.value = word.id
             } else {
+                _memoryAidSuggestionWordId.value = null
                 markAnswered()
             }
             loadQueueForBook(book, newWordsLimit.value)
@@ -186,6 +208,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         val book = activeBook.value ?: return
         launchSubmit {
             pendingFailedWordId = null
+            _memoryAidSuggestionWordId.value = null
             removeFromImmediateQueue(word.id)
             withContext(Dispatchers.IO) {
                 repository.removeFromNewWords(word.id)
@@ -206,8 +229,10 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         launchSubmit {
             if (outcome == SpellingOutcome.FAILED) {
                 pendingFailedWordId = word.id
+                _memoryAidSuggestionWordId.value = word.id
             } else {
                 pendingFailedWordId = null
+                _memoryAidSuggestionWordId.value = null
             }
             removeFromImmediateQueue(word.id)
             withContext(Dispatchers.IO) {
@@ -218,9 +243,6 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                     attemptCount = attemptCount,
                     durationMillis = durationMillis
                 )
-            }
-            if (outcome.shouldAddImmediateRetry) {
-                enqueueImmediateRetry(word)
             }
             if (outcome == SpellingOutcome.FAILED) {
                 return@launchSubmit
@@ -238,6 +260,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         if (pendingFailedWordId != currentWord.id) return
         pendingFailedWordId = null
         viewModelScope.launch {
+            enqueueImmediateRetry(currentWord)
             markAnswered()
             loadQueueForBook(book, newWordsLimit.value)
         }
@@ -272,6 +295,125 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun refreshAiAvailability() {
+        viewModelScope.launch {
+            val config = aiConfigRepository.getConfig()
+            _aiState.value = _aiState.value.copy(
+                isEnabled = config.enabled,
+                isConfigured = config.isConfigured()
+            )
+        }
+    }
+
+    fun requestAiExample(forceRefresh: Boolean = false) {
+        val word = _currentWord.value ?: return
+        viewModelScope.launch {
+            val config = aiConfigRepository.getConfig()
+            val enabled = config.enabled
+            val configured = config.isConfigured()
+            _aiState.value = _aiState.value.copy(
+                isEnabled = enabled,
+                isConfigured = configured
+            )
+            if (!enabled || !configured) {
+                _aiState.value = _aiState.value.copy(
+                    activeType = AIContentType.EXAMPLE,
+                    error = "请先在 AI 实验室启用并配置 API Key",
+                    content = "",
+                    isLoading = false
+                )
+                return@launch
+            }
+
+            _aiState.value = _aiState.value.copy(
+                activeType = AIContentType.EXAMPLE,
+                isLoading = true,
+                error = null
+            )
+            val result = withContext(Dispatchers.IO) {
+                aiRepository.generateExample(
+                    wordId = word.id,
+                    word = word.word,
+                    forceRefresh = forceRefresh
+                )
+            }
+            result.fold(
+                onSuccess = { content ->
+                    _aiState.value = _aiState.value.copy(
+                        activeType = AIContentType.EXAMPLE,
+                        content = content,
+                        error = null,
+                        isLoading = false
+                    )
+                },
+                onFailure = { throwable ->
+                    _aiState.value = _aiState.value.copy(
+                        activeType = AIContentType.EXAMPLE,
+                        content = "",
+                        error = throwable.message ?: "例句生成失败",
+                        isLoading = false
+                    )
+                }
+            )
+        }
+    }
+
+    fun requestAiMemoryAid(forceRefresh: Boolean = false) {
+        val word = _currentWord.value ?: return
+        if (_memoryAidSuggestionWordId.value == word.id) {
+            _memoryAidSuggestionWordId.value = null
+        }
+        viewModelScope.launch {
+            val config = aiConfigRepository.getConfig()
+            val enabled = config.enabled
+            val configured = config.isConfigured()
+            _aiState.value = _aiState.value.copy(
+                isEnabled = enabled,
+                isConfigured = configured
+            )
+            if (!enabled || !configured) {
+                _aiState.value = _aiState.value.copy(
+                    activeType = AIContentType.MEMORY_AID,
+                    error = "请先在 AI 实验室启用并配置 API Key",
+                    content = "",
+                    isLoading = false
+                )
+                return@launch
+            }
+
+            _aiState.value = _aiState.value.copy(
+                activeType = AIContentType.MEMORY_AID,
+                isLoading = true,
+                error = null
+            )
+            val result = withContext(Dispatchers.IO) {
+                aiRepository.generateMemoryAid(
+                    wordId = word.id,
+                    word = word.word,
+                    forceRefresh = forceRefresh
+                )
+            }
+            result.fold(
+                onSuccess = { content ->
+                    _aiState.value = _aiState.value.copy(
+                        activeType = AIContentType.MEMORY_AID,
+                        content = content,
+                        error = null,
+                        isLoading = false
+                    )
+                },
+                onFailure = { throwable ->
+                    _aiState.value = _aiState.value.copy(
+                        activeType = AIContentType.MEMORY_AID,
+                        content = "",
+                        error = throwable.message ?: "助记生成失败",
+                        isLoading = false
+                    )
+                }
+            )
+        }
+    }
+
     fun clearMessage() {
         _message.value = null
     }
@@ -302,6 +444,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun updateQueue(list: List<Word>) {
+        val oldWordId = _currentWord.value?.id
         val remaining = list.size
         val total = answeredInSession + remaining
         _totalCount.value = total
@@ -310,7 +453,16 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             remaining == 0 -> total
             else -> (answeredInSession + 1).coerceAtMost(total)
         }
-        _currentWord.value = list.firstOrNull()
+        val nextWord = list.firstOrNull()
+        _currentWord.value = nextWord
+        if (oldWordId != nextWord?.id) {
+            _aiState.value = _aiState.value.copy(
+                isLoading = false,
+                activeType = null,
+                content = "",
+                error = null
+            )
+        }
     }
 
     private fun markAnswered() {
@@ -349,11 +501,12 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             .toMutableList()
 
         immediateRetryQueue.forEach { retryWord ->
-            val insertIndex = if (merged.isEmpty()) {
-                0
+            val insertIndex = if (merged.size <= 5) {
+                merged.size
             } else {
-                // Keep retry words behind at least one other item when possible.
-                Random.nextInt(from = 1, until = merged.size + 1)
+                val maxIndex = merged.lastIndex
+                val minIndex = 2.coerceAtMost(maxIndex)
+                Random.nextInt(from = minIndex, until = maxIndex + 1)
             }
             merged.add(insertIndex, retryWord)
         }

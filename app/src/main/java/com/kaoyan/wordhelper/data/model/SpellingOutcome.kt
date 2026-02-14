@@ -7,7 +7,7 @@ enum class SpellingOutcome(val quality: Int) {
     FAILED(0);
 
     val shouldAddImmediateRetry: Boolean
-        get() = this == RETRY_SUCCESS || this == FAILED
+        get() = this == FAILED
 
     val spellCorrectDelta: Int
         get() = if (quality >= 4) 1 else 0

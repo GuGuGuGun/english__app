@@ -2,6 +2,8 @@ package com.kaoyan.wordhelper
 
 import android.app.Application
 import com.kaoyan.wordhelper.data.database.AppDatabase
+import com.kaoyan.wordhelper.data.repository.AIConfigRepository
+import com.kaoyan.wordhelper.data.repository.AIRepository
 import com.kaoyan.wordhelper.data.repository.SettingsRepository
 import com.kaoyan.wordhelper.data.repository.WordRepository
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +24,14 @@ class KaoyanWordApp : Application() {
 
     val settingsRepository: SettingsRepository by lazy {
         SettingsRepository(this)
+    }
+
+    val aiConfigRepository: AIConfigRepository by lazy {
+        AIConfigRepository(this)
+    }
+
+    val aiRepository: AIRepository by lazy {
+        AIRepository(database, aiConfigRepository)
     }
 
     override fun onCreate() {

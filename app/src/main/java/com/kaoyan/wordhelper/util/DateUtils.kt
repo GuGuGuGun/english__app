@@ -67,7 +67,8 @@ object DateUtils {
         zoneId: ZoneId = ZoneId.systemDefault()
     ): Boolean {
         if (nextReviewTime <= 0L) return false
-        return daysBetweenByRefreshDay(now, nextReviewTime, zoneId) <= 0L
+        if (nextReviewTime <= now) return true
+        return daysBetweenByRefreshDay(now, nextReviewTime, zoneId) < 0L
     }
 
     private fun daysBetweenByRefreshDay(now: Long, target: Long, zoneId: ZoneId): Long {

@@ -277,8 +277,11 @@ class WordRepository(private val database: AppDatabase) {
         database.withTransaction {
             val existing = progressDao.getGlobalProgress(wordId)
             val schedule = Sm2Scheduler.schedule(existing, rating)
-            val isNewWord = existing == null
-            val reviewCount = (existing?.reviewCount ?: 0) + 1
+            val previousReviewCount = existing?.reviewCount ?: 0
+            val qualifiesAsCompleted = rating.quality >= StudyRating.HARD.quality
+            val reviewCount = previousReviewCount + if (qualifiesAsCompleted) 1 else 0
+            val isNewLearningCompletion = qualifiesAsCompleted && previousReviewCount == 0
+            val isReviewCompletion = qualifiesAsCompleted && previousReviewCount > 0
             val linkedBookIds = (wordDao.getBookIdsByWordId(wordId) + bookId).distinct()
             linkedBookIds.forEach { linkedBookId ->
                 val existingByBook = progressDao.getProgress(wordId, linkedBookId)
@@ -302,10 +305,12 @@ class WordRepository(private val database: AppDatabase) {
                 }
             }
             earlyReviewDao.deleteByWord(wordId)
-            recordStudyInternal()
+            if (qualifiesAsCompleted) {
+                recordStudyInternal()
+            }
             updateDailyStatsInternal(
-                newWordsDelta = if (isNewWord) 1 else 0,
-                reviewWordsDelta = if (isNewWord) 0 else 1
+                newWordsDelta = if (isNewLearningCompletion) 1 else 0,
+                reviewWordsDelta = if (isReviewCompletion) 1 else 0
             )
         }
     }
@@ -320,8 +325,11 @@ class WordRepository(private val database: AppDatabase) {
         database.withTransaction {
             val existing = progressDao.getGlobalProgress(wordId)
             val schedule = Sm2Scheduler.scheduleSpelling(existing, outcome)
-            val isNewWord = existing == null
-            val reviewCount = (existing?.reviewCount ?: 0) + 1
+            val previousReviewCount = existing?.reviewCount ?: 0
+            val qualifiesAsCompleted = outcome.quality >= StudyRating.HARD.quality
+            val reviewCount = previousReviewCount + if (qualifiesAsCompleted) 1 else 0
+            val isNewLearningCompletion = qualifiesAsCompleted && previousReviewCount == 0
+            val isReviewCompletion = qualifiesAsCompleted && previousReviewCount > 0
             val spellCorrectCount = (existing?.spellCorrectCount ?: 0) + outcome.spellCorrectDelta
             val spellWrongCount = (existing?.spellWrongCount ?: 0) + outcome.spellWrongDelta
             val linkedBookIds = (wordDao.getBookIdsByWordId(wordId) + bookId).distinct()
@@ -347,10 +355,12 @@ class WordRepository(private val database: AppDatabase) {
                 }
             }
             earlyReviewDao.deleteByWord(wordId)
-            recordStudyInternal()
+            if (qualifiesAsCompleted) {
+                recordStudyInternal()
+            }
             updateDailyStatsInternal(
-                newWordsDelta = if (isNewWord) 1 else 0,
-                reviewWordsDelta = if (isNewWord) 0 else 1,
+                newWordsDelta = if (isNewLearningCompletion) 1 else 0,
+                reviewWordsDelta = if (isReviewCompletion) 1 else 0,
                 spellPracticeDelta = attemptCount.coerceAtLeast(1),
                 durationMillisDelta = durationMillis.coerceAtLeast(0L)
             )
@@ -403,7 +413,8 @@ class WordRepository(private val database: AppDatabase) {
             .filter { it.id !in progressIds && it.id !in excludedIds }
             .take(adjustedNewWordLimit)
 
-        return dueWords + earlyReviewWords + newWords
+        val reviewWords = dueWords + earlyReviewWords
+        return mixReviewAndNewWords(reviewWords, newWords)
     }
 
     fun getEarlyReviewCountFlow(bookId: Long): Flow<Int> = earlyReviewDao.getCountFlow(bookId)
@@ -566,6 +577,35 @@ class WordRepository(private val database: AppDatabase) {
 
     private fun normalizeWordKey(raw: String): String {
         return raw.trim().lowercase()
+    }
+
+    private fun mixReviewAndNewWords(reviewWords: List<Word>, newWords: List<Word>): List<Word> {
+        if (reviewWords.isEmpty()) return newWords
+        if (newWords.isEmpty()) return reviewWords
+
+        val mixed = ArrayList<Word>(reviewWords.size + newWords.size)
+        var reviewIndex = 0
+        var newIndex = 0
+        var continuousReviewCount = 0
+
+        while (reviewIndex < reviewWords.size || newIndex < newWords.size) {
+            val shouldInjectNew = newIndex < newWords.size && continuousReviewCount >= 3
+            if (reviewIndex < reviewWords.size && !shouldInjectNew) {
+                mixed.add(reviewWords[reviewIndex])
+                reviewIndex += 1
+                continuousReviewCount += 1
+            } else if (newIndex < newWords.size) {
+                mixed.add(newWords[newIndex])
+                newIndex += 1
+                continuousReviewCount = 0
+            } else {
+                mixed.add(reviewWords[reviewIndex])
+                reviewIndex += 1
+                continuousReviewCount += 1
+            }
+        }
+
+        return mixed
     }
 
     private suspend fun upsertDraftsForBook(bookId: Long, drafts: List<WordDraft>) {

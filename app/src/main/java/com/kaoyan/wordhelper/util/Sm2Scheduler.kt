@@ -5,21 +5,23 @@ import com.kaoyan.wordhelper.data.model.SpellingOutcome
 import com.kaoyan.wordhelper.data.model.StudyRating
 import java.time.Instant
 import java.time.ZoneId
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 object Sm2Scheduler {
 
+    private const val DEFAULT_EASE = 2.5f
     private const val MIN_EASE = 1.3f
     private const val MIN_EASE_SPELLING = 1.1f
     private const val MAX_EASE = 3.0f
+    private const val ONE_MINUTE = 60 * 1000L
     private const val TEN_MINUTES = 10 * 60 * 1000L
-    private const val DAY_MILLIS = 24 * 60 * 60 * 1000L
     private const val DAY_REFRESH_HOUR = 4
     private const val MASTERED_INTERVAL_DAYS = 21
+    private const val MASTERED_MIN_REVIEW_COUNT = 2
+    private const val MASTERED_MIN_EASE = 2.3f
     private const val MAX_GROWTH_FACTOR = 2.5f
-    private const val HARD_REDUCTION_FACTOR = 0.7f
+    private const val HARD_GROWTH_FACTOR = 1.2f
 
     data class ScheduleResult(
         val repetitions: Int,
@@ -30,65 +32,49 @@ object Sm2Scheduler {
     )
 
     fun schedule(current: Progress?, rating: StudyRating, now: Long = System.currentTimeMillis()): ScheduleResult {
-        val quality = rating.quality
-        var ease = current?.easeFactor ?: 2.5f
+        var ease = updateEase(current?.easeFactor ?: DEFAULT_EASE, rating.quality, MIN_EASE)
         val previousRepetitions = current?.repetitions ?: 0
         val previousIntervalDays = current?.intervalDays ?: 0
-        val previousStatus = current?.status ?: Progress.STATUS_NEW
         val previousReviewCount = current?.reviewCount ?: 0
+        val isLearningPhase = isLearningPhase(current)
 
-        ease = updateEase(ease, quality)
-
-        // Forgot: reset interval to 1 day in DB, and rely on session immediate-retry queue
-        // to reinforce once more in the current learning session.
-        if (quality < 3) {
+        if (rating == StudyRating.AGAIN) {
+            ease = (ease - 0.2f).coerceAtLeast(MIN_EASE)
             return ScheduleResult(
                 repetitions = 0,
-                intervalDays = 1,
+                intervalDays = 0,
                 easeFactor = ease,
-                nextReviewTime = computeNextReviewTimeByDays(now, 1),
+                nextReviewTime = now + ONE_MINUTE,
                 status = Progress.STATUS_LEARNING
             )
         }
 
-        // New word branch: keep early spacing dense and smooth.
-        if (previousStatus == Progress.STATUS_NEW) {
-            val intervalDays = if (quality >= 5) 1 else 0
-            val nextReviewTime = if (intervalDays == 0) now + TEN_MINUTES else computeNextReviewTimeByDays(now, 1)
+        if (isLearningPhase) {
+            val intervalDays = when (rating) {
+                StudyRating.HARD -> 0
+                StudyRating.GOOD -> 1
+                StudyRating.AGAIN -> 0
+            }
+            val effectiveReviewCount = previousReviewCount + 1
             return ScheduleResult(
-                repetitions = if (quality >= 5) 1 else 0,
+                repetitions = previousRepetitions + 1,
                 intervalDays = intervalDays,
                 easeFactor = ease,
-                nextReviewTime = nextReviewTime,
-                status = Progress.STATUS_LEARNING
+                nextReviewTime = nextReviewTimeByInterval(now, intervalDays),
+                status = resolveStatus(intervalDays, effectiveReviewCount, ease)
             )
         }
 
-        val intervalDays = if (quality == StudyRating.HARD.quality) {
-            if (previousIntervalDays <= 1) {
-                1
-            } else {
-                (previousIntervalDays * HARD_REDUCTION_FACTOR)
-                    .roundToInt()
-                    .coerceIn(1, previousIntervalDays)
-            }
+        val oldInterval = previousIntervalDays.coerceAtLeast(1)
+        val intervalDays = if (rating == StudyRating.HARD) {
+            conservativeInterval(oldInterval, ease)
         } else {
-            when (previousReviewCount) {
-                0 -> 1
-                1 -> 3
-                else -> {
-                    val grown = (previousIntervalDays * ease).roundToInt().coerceAtLeast(1)
-                    val maxAllowed = (previousIntervalDays * MAX_GROWTH_FACTOR).roundToInt().coerceAtLeast(1)
-                    min(grown, maxAllowed)
-                }
-            }
+            standardGoodInterval(oldInterval, ease)
         }
+
+        val effectiveReviewCount = previousReviewCount + 1
         val repetitions = previousRepetitions + 1
-        val status = if (intervalDays >= MASTERED_INTERVAL_DAYS && previousReviewCount >= 2) {
-            Progress.STATUS_MASTERED
-        } else {
-            Progress.STATUS_LEARNING
-        }
+        val status = resolveStatus(intervalDays, effectiveReviewCount, ease)
         val nextReviewTime = computeNextReviewTimeByDays(now, intervalDays)
 
         return ScheduleResult(
@@ -105,63 +91,63 @@ object Sm2Scheduler {
         outcome: SpellingOutcome,
         now: Long = System.currentTimeMillis()
     ): ScheduleResult {
-        val previousStatus = current?.status ?: Progress.STATUS_NEW
         val previousReviewCount = current?.reviewCount ?: 0
         val previousIntervalDays = current?.intervalDays ?: 0
         val previousRepetitions = current?.repetitions ?: 0
+        val isLearningPhase = isLearningPhase(current)
+        var ease = updateEase(current?.easeFactor ?: DEFAULT_EASE, outcome.quality, MIN_EASE_SPELLING)
 
-        var ease = updateEase(current?.easeFactor ?: 2.5f, outcome.quality, MIN_EASE_SPELLING)
-        val intervalDays = when (outcome) {
-            SpellingOutcome.PERFECT -> {
-                val standard = spellingStandardInterval(previousReviewCount, previousIntervalDays, ease)
-                (standard * 1.1f).roundToInt().coerceAtLeast(1)
+        if (outcome == SpellingOutcome.FAILED) {
+            ease = (ease - 0.2f).coerceAtLeast(MIN_EASE_SPELLING)
+            return ScheduleResult(
+                repetitions = 0,
+                intervalDays = 0,
+                easeFactor = ease,
+                nextReviewTime = now + ONE_MINUTE,
+                status = Progress.STATUS_LEARNING
+            )
+        }
+
+        val intervalDays = when {
+            isLearningPhase -> {
+                when (outcome) {
+                    SpellingOutcome.RETRY_SUCCESS -> 0
+                    SpellingOutcome.HINTED,
+                    SpellingOutcome.PERFECT -> 1
+                    SpellingOutcome.FAILED -> 0
+                }
             }
 
-            SpellingOutcome.HINTED -> {
-                spellingStandardInterval(previousReviewCount, previousIntervalDays, ease)
+            outcome == SpellingOutcome.RETRY_SUCCESS -> {
+                conservativeInterval(previousIntervalDays.coerceAtLeast(1), ease)
             }
 
-            SpellingOutcome.RETRY_SUCCESS -> 1
+            outcome == SpellingOutcome.HINTED -> {
+                standardGoodInterval(previousIntervalDays.coerceAtLeast(1), ease)
+            }
 
-            SpellingOutcome.FAILED -> {
-                ease = max(1.3f, ease - 0.2f)
-                0
+            else -> {
+                val base = standardGoodInterval(previousIntervalDays.coerceAtLeast(1), ease)
+                (base * 1.1f).roundToInt().coerceAtLeast(1)
             }
         }
-
-        val repetitions = when (outcome) {
-            SpellingOutcome.FAILED -> 0
-            SpellingOutcome.RETRY_SUCCESS -> max(1, previousRepetitions)
-            else -> if (previousStatus == Progress.STATUS_NEW) 1 else previousRepetitions + 1
-        }
-
-        val status = if (
-            outcome != SpellingOutcome.FAILED &&
-            intervalDays >= MASTERED_INTERVAL_DAYS &&
-            previousReviewCount >= 2
-        ) {
-            Progress.STATUS_MASTERED
-        } else {
-            Progress.STATUS_LEARNING
-        }
-
-        val nextReviewTime = if (intervalDays > 0) {
-            computeNextReviewTimeByDays(now, intervalDays)
-        } else {
-            now + TEN_MINUTES
-        }
+        val effectiveReviewCount = previousReviewCount + 1
+        val repetitions = previousRepetitions + 1
+        val status = resolveStatus(intervalDays, effectiveReviewCount, ease)
 
         return ScheduleResult(
             repetitions = repetitions,
             intervalDays = intervalDays,
             easeFactor = ease,
-            nextReviewTime = nextReviewTime,
+            nextReviewTime = nextReviewTimeByInterval(now, intervalDays),
             status = status
         )
     }
 
-    private fun updateEase(currentEase: Float, quality: Int): Float {
-        return updateEase(currentEase, quality, MIN_EASE)
+    private fun isLearningPhase(current: Progress?): Boolean {
+        if (current == null) return true
+        if (current.status == Progress.STATUS_NEW) return true
+        return current.intervalDays <= 0 || current.repetitions <= 0
     }
 
     private fun updateEase(currentEase: Float, quality: Int, minEase: Float): Float {
@@ -169,20 +155,37 @@ object Sm2Scheduler {
         return updated.coerceIn(minEase, MAX_EASE)
     }
 
-    private fun spellingStandardInterval(
-        previousReviewCount: Int,
-        previousIntervalDays: Int,
-        ease: Float
-    ): Int {
-        return when {
-            previousReviewCount <= 0 -> 1
-            previousReviewCount == 1 -> 3
-            else -> {
-                val base = previousIntervalDays.coerceAtLeast(1)
-                val grown = (base * ease).roundToInt().coerceAtLeast(1)
-                val maxAllowed = (base * MAX_GROWTH_FACTOR).roundToInt().coerceAtLeast(1)
-                min(grown, maxAllowed)
-            }
+    private fun conservativeInterval(oldIntervalDays: Int, ease: Float): Int {
+        val safeOldInterval = oldIntervalDays.coerceAtLeast(1)
+        val byHard = (safeOldInterval * HARD_GROWTH_FACTOR).roundToInt()
+        val byEase = (safeOldInterval * ease).roundToInt()
+        return min(byHard, byEase).coerceAtLeast(1)
+    }
+
+    private fun standardGoodInterval(oldIntervalDays: Int, ease: Float): Int {
+        val safeOldInterval = oldIntervalDays.coerceAtLeast(1)
+        val grown = (safeOldInterval * ease).roundToInt().coerceAtLeast(1)
+        val maxAllowed = (safeOldInterval * MAX_GROWTH_FACTOR).roundToInt().coerceAtLeast(1)
+        return min(grown, maxAllowed)
+    }
+
+    private fun resolveStatus(intervalDays: Int, reviewCount: Int, easeFactor: Float): Int {
+        return if (
+            intervalDays >= MASTERED_INTERVAL_DAYS &&
+            reviewCount >= MASTERED_MIN_REVIEW_COUNT &&
+            easeFactor >= MASTERED_MIN_EASE
+        ) {
+            Progress.STATUS_MASTERED
+        } else {
+            Progress.STATUS_LEARNING
+        }
+    }
+
+    private fun nextReviewTimeByInterval(now: Long, intervalDays: Int): Long {
+        return if (intervalDays > 0) {
+            computeNextReviewTimeByDays(now, intervalDays)
+        } else {
+            now + TEN_MINUTES
         }
     }
 
