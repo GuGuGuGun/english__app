@@ -25,20 +25,19 @@
 
 - JDK 17
 - Android SDK（Compile SDK 34）
-- Gradle（当前 `open/` 目录不含 Gradle Wrapper）
-
+- Gradle
 ## 快速开始
 
 1. 在项目根目录创建 `local.properties`：
 
 ```properties
-sdk.dir=E:\\android_sdk
+sdk.dir=android Sdk文件夹
 ```
 
 2. 设置 JDK（PowerShell 示例）：
 
 ```powershell
-$env:JAVA_HOME = "E:\java_17"
+$env:JAVA_HOME = "java17文件夹
 $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 ```
 
