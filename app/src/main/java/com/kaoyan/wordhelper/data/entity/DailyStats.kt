@@ -20,5 +20,9 @@ data class DailyStats(
     @ColumnInfo(name = "spell_practice_count")
     val spellPracticeCount: Int = 0,
     @ColumnInfo(name = "duration_millis")
-    val durationMillis: Long = 0L
+    val durationMillis: Long = 0L,
+    @ColumnInfo(name = "gesture_easy_count")
+    val gestureEasyCount: Int = 0,
+    @ColumnInfo(name = "gesture_notebook_count")
+    val gestureNotebookCount: Int = 0
 )

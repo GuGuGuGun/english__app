@@ -44,6 +44,26 @@ interface ProgressDao {
     @Query("SELECT * FROM tb_progress WHERE book_id = :bookId")
     fun getProgressByBookFlow(bookId: Long): Flow<List<Progress>>
 
+    @Query(
+        """SELECT * FROM tb_progress
+           WHERE status != 2 AND next_review_time > 0
+           ORDER BY next_review_time ASC"""
+    )
+    suspend fun getAllPendingProgress(): List<Progress>
+
+    @Query(
+        """SELECT * FROM tb_progress
+           WHERE status != 2
+             AND next_review_time >= :startTime
+             AND next_review_time < :endTime
+           ORDER BY next_review_time ASC
+           LIMIT :limit"""
+    )
+    suspend fun getWordsForDate(startTime: Long, endTime: Long, limit: Int): List<Progress>
+
+    @Query("UPDATE tb_progress SET next_review_time = :time WHERE id = :id")
+    suspend fun updateNextReviewTime(id: Long, time: Long)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(progress: Progress): Long
 
@@ -52,4 +72,7 @@ interface ProgressDao {
 
     @Query("DELETE FROM tb_progress WHERE book_id = :bookId")
     suspend fun deleteByBook(bookId: Long)
+
+    @Query("DELETE FROM tb_progress WHERE word_id = :wordId")
+    suspend fun deleteByWordId(wordId: Long)
 }

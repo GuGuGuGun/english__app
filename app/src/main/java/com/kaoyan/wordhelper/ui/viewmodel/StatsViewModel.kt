@@ -6,21 +6,34 @@ import androidx.lifecycle.viewModelScope
 import com.kaoyan.wordhelper.KaoyanWordApp
 import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.model.DailyStatsAggregate
+import com.kaoyan.wordhelper.data.repository.ForecastDataSource
+import com.kaoyan.wordhelper.util.PressureLevel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.DayOfWeek
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 enum class StatsRange(val days: Long, val label: String) {
     WEEK(7, "近7天"),
     MONTH(30, "近30天")
+}
+
+enum class CalendarMode(val label: String) {
+    HISTORY("历史模式"),
+    FUTURE("未来模式")
 }
 
 data class LineChartEntry(
@@ -43,21 +56,62 @@ data class HeatmapCell(
     val inRange: Boolean
 )
 
+data class ForecastDayUi(
+    val date: LocalDate,
+    val reviewCount: Int,
+    val newWordQuota: Int,
+    val totalCount: Int,
+    val pressureLevel: PressureLevel,
+    val isToday: Boolean
+)
+
+data class ForecastWordPreview(
+    val word: String,
+    val meaning: String
+)
+
+data class GestureStatsSummary(
+    val gestureEasyCount: Int = 0,
+    val gestureNotebookCount: Int = 0
+)
+
+private data class ForecastUiBundle(
+    val forecast: List<ForecastDayUi>,
+    val selectedDate: LocalDate?,
+    val selectedWords: List<ForecastWordPreview>,
+    val loadLabel: String
+)
+
 data class StatsUiState(
     val range: StatsRange = StatsRange.WEEK,
     val lineData: List<LineChartEntry> = emptyList(),
     val mastery: MasteryDistribution = MasteryDistribution(0, 0, 0, 0),
-    val heatmap: List<HeatmapCell> = emptyList()
+    val heatmap: List<HeatmapCell> = emptyList(),
+    val gestureEasyCount: Int = 0,
+    val gestureNotebookCount: Int = 0,
+    val calendarMode: CalendarMode = CalendarMode.HISTORY,
+    val forecast: List<ForecastDayUi> = emptyList(),
+    val selectedForecastDate: LocalDate? = null,
+    val selectedForecastWords: List<ForecastWordPreview> = emptyList(),
+    val forecastLoadLabel: String = ""
 )
 
 class StatsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as KaoyanWordApp).repository
+    private val forecastRepository = (application as KaoyanWordApp).forecastRepository
+    private val zoneId = ZoneId.systemDefault()
 
     private val rangeFlow = MutableStateFlow(StatsRange.WEEK)
-    val range: StateFlow<StatsRange> = rangeFlow
+    private val calendarModeFlow = MutableStateFlow(CalendarMode.HISTORY)
+    private val forecastFlow = MutableStateFlow<List<ForecastDayUi>>(emptyList())
+    private val selectedForecastDateFlow = MutableStateFlow<LocalDate?>(null)
+    private val selectedForecastWordsFlow = MutableStateFlow<List<ForecastWordPreview>>(emptyList())
+    private val forecastLoadLabelFlow = MutableStateFlow("")
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message.asStateFlow()
 
     private val lineDataFlow = rangeFlow.flatMapLatest { range ->
-        val endDate = LocalDate.now()
+        val endDate = LocalDate.now(zoneId)
         val startDate = endDate.minusDays(range.days - 1)
         repository.getDailyStatsAggregated(startDate, endDate)
             .map { aggregates -> buildLineData(startDate, endDate, aggregates) }
@@ -78,7 +132,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         }
 
     private val heatmapRange = run {
-        val end = LocalDate.now()
+        val end = LocalDate.now(zoneId)
         val start = end.minusWeeks(11).with(DayOfWeek.MONDAY)
         start to end
     }
@@ -90,17 +144,155 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         buildHeatmap(heatmapRange.first, heatmapRange.second, aggregates)
     }
 
-    val uiState: StateFlow<StatsUiState> = combine(
+    private val gestureStatsFlow = rangeFlow.flatMapLatest { range ->
+        val endDate = LocalDate.now(zoneId)
+        val startDate = endDate.minusDays(range.days - 1)
+        repository.getDailyStatsAggregated(startDate, endDate)
+            .map { aggregates ->
+                GestureStatsSummary(
+                    gestureEasyCount = aggregates.sumOf { it.gestureEasyCount },
+                    gestureNotebookCount = aggregates.sumOf { it.gestureNotebookCount }
+                )
+            }
+    }
+
+    private val baseUiFlow = combine(
         rangeFlow,
         lineDataFlow,
         masteryFlow,
-        heatmapFlow
-    ) { range, lineData, mastery, heatmap ->
-        StatsUiState(range = range, lineData = lineData, mastery = mastery, heatmap = heatmap)
+        heatmapFlow,
+        gestureStatsFlow
+    ) { range, lineData, mastery, heatmap, gestureStats ->
+        StatsUiState(
+            range = range,
+            lineData = lineData,
+            mastery = mastery,
+            heatmap = heatmap,
+            gestureEasyCount = gestureStats.gestureEasyCount,
+            gestureNotebookCount = gestureStats.gestureNotebookCount
+        )
+    }
+
+    private val forecastUiFlow = combine(
+        forecastFlow,
+        selectedForecastDateFlow,
+        selectedForecastWordsFlow,
+        forecastLoadLabelFlow
+    ) { forecast, selectedDate, selectedWords, loadLabel ->
+        ForecastUiBundle(
+            forecast = forecast,
+            selectedDate = selectedDate,
+            selectedWords = selectedWords,
+            loadLabel = loadLabel
+        )
+    }
+
+    val uiState: StateFlow<StatsUiState> = combine(
+        baseUiFlow,
+        calendarModeFlow,
+        forecastUiFlow
+    ) { base, mode, forecastUi ->
+        base.copy(
+            calendarMode = mode,
+            forecast = forecastUi.forecast,
+            selectedForecastDate = forecastUi.selectedDate,
+            selectedForecastWords = forecastUi.selectedWords,
+            forecastLoadLabel = forecastUi.loadLabel
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatsUiState())
+
+    init {
+        refreshForecast()
+    }
 
     fun updateRange(range: StatsRange) {
         rangeFlow.value = range
+    }
+
+    fun updateCalendarMode(mode: CalendarMode) {
+        calendarModeFlow.value = mode
+        if (mode == CalendarMode.FUTURE && forecastFlow.value.isEmpty()) {
+            refreshForecast()
+        }
+    }
+
+    fun selectForecastDate(date: LocalDate) {
+        selectedForecastDateFlow.value = date
+        loadForecastPreview(date)
+    }
+
+    fun pullForwardForSelectedDate(moveCount: Int = 5) {
+        val selectedDate = selectedForecastDateFlow.value ?: return
+        if (!selectedDate.isAfter(LocalDate.now(zoneId))) return
+        viewModelScope.launch {
+            val moved = withContext(Dispatchers.IO) {
+                forecastRepository.pullForwardReviews(
+                    targetDate = selectedDate.atStartOfDay(zoneId).toInstant().toEpochMilli(),
+                    count = moveCount
+                )
+            }
+            _message.value = if (moved > 0) {
+                "已提前消化 $moved 个复习任务"
+            } else {
+                "没有可前移的复习任务"
+            }
+            refreshForecast()
+        }
+    }
+
+    fun consumeMessage() {
+        _message.value = null
+    }
+
+    private fun refreshForecast() {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                forecastRepository.loadNext7DaysPressure()
+            }
+            val days = result.days.map { day ->
+                val localDate = Instant.ofEpochMilli(day.date).atZone(zoneId).toLocalDate()
+                ForecastDayUi(
+                    date = localDate,
+                    reviewCount = day.reviewCount,
+                    newWordQuota = day.newWordQuota,
+                    totalCount = day.totalCount,
+                    pressureLevel = day.pressureLevel,
+                    isToday = localDate == LocalDate.now(zoneId)
+                )
+            }
+            forecastFlow.value = days
+            forecastLoadLabelFlow.value = buildForecastLoadLabel(result.source, result.elapsedMillis)
+            val selected = selectedForecastDateFlow.value
+            val fallback = days.firstOrNull { it.isToday }?.date ?: days.firstOrNull()?.date
+            val resolved = when {
+                selected == null -> fallback
+                days.any { it.date == selected } -> selected
+                else -> fallback
+            }
+            selectedForecastDateFlow.value = resolved
+            if (resolved != null) {
+                loadForecastPreview(resolved)
+            } else {
+                selectedForecastWordsFlow.value = emptyList()
+            }
+        }
+    }
+
+    private fun loadForecastPreview(date: LocalDate) {
+        viewModelScope.launch {
+            val words = withContext(Dispatchers.IO) {
+                forecastRepository.getWordsForDate(
+                    date = date.atStartOfDay(zoneId).toInstant().toEpochMilli(),
+                    limit = 5
+                )
+            }
+            selectedForecastWordsFlow.value = words.map { word ->
+                ForecastWordPreview(
+                    word = word.word,
+                    meaning = word.meaning.ifBlank { "（无释义）" }
+                )
+            }
+        }
     }
 
     private fun buildLineData(
@@ -188,6 +380,14 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun parseDate(raw: String): LocalDate? {
         return runCatching { LocalDate.parse(raw, DATE_FORMATTER) }.getOrNull()
+    }
+
+    private fun buildForecastLoadLabel(source: ForecastDataSource, elapsedMillis: Long): String {
+        val sourceLabel = when (source) {
+            ForecastDataSource.CACHE -> "缓存命中"
+            ForecastDataSource.CALCULATED -> "实时计算"
+        }
+        return "预测来源：$sourceLabel · 耗时 ${elapsedMillis.coerceAtLeast(0L)}ms"
     }
 
     companion object {

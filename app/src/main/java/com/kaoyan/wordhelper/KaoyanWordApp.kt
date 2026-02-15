@@ -4,6 +4,7 @@ import android.app.Application
 import com.kaoyan.wordhelper.data.database.AppDatabase
 import com.kaoyan.wordhelper.data.repository.AIConfigRepository
 import com.kaoyan.wordhelper.data.repository.AIRepository
+import com.kaoyan.wordhelper.data.repository.ForecastRepository
 import com.kaoyan.wordhelper.data.repository.SettingsRepository
 import com.kaoyan.wordhelper.data.repository.WordRepository
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +25,10 @@ class KaoyanWordApp : Application() {
 
     val settingsRepository: SettingsRepository by lazy {
         SettingsRepository(this)
+    }
+
+    val forecastRepository: ForecastRepository by lazy {
+        ForecastRepository(database, settingsRepository)
     }
 
     val aiConfigRepository: AIConfigRepository by lazy {

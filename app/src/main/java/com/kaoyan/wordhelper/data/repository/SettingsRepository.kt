@@ -13,6 +13,7 @@ private const val DEFAULT_NEW_WORDS_LIMIT = 20
 private const val DEFAULT_FONT_SCALE = 1.0f
 private const val DEFAULT_REVIEW_PRESSURE_RELIEF_ENABLED = true
 private const val DEFAULT_REVIEW_PRESSURE_DAILY_CAP = 120
+private const val DEFAULT_SWIPE_GESTURE_GUIDE_SHOWN = false
 private val Context.dataStore by preferencesDataStore(name = "user_settings")
 
 data class UserSettings(
@@ -20,7 +21,8 @@ data class UserSettings(
     val fontScale: Float = DEFAULT_FONT_SCALE,
     val darkMode: DarkMode = DarkMode.FOLLOW_SYSTEM,
     val reviewPressureReliefEnabled: Boolean = DEFAULT_REVIEW_PRESSURE_RELIEF_ENABLED,
-    val reviewPressureDailyCap: Int = DEFAULT_REVIEW_PRESSURE_DAILY_CAP
+    val reviewPressureDailyCap: Int = DEFAULT_REVIEW_PRESSURE_DAILY_CAP,
+    val swipeGestureGuideShown: Boolean = DEFAULT_SWIPE_GESTURE_GUIDE_SHOWN
 )
 
 enum class DarkMode(val value: Int) {
@@ -46,7 +48,8 @@ class SettingsRepository(private val context: Context) {
             reviewPressureReliefEnabled = prefs[KEY_REVIEW_PRESSURE_RELIEF_ENABLED]
                 ?: DEFAULT_REVIEW_PRESSURE_RELIEF_ENABLED,
             reviewPressureDailyCap = (prefs[KEY_REVIEW_PRESSURE_DAILY_CAP] ?: DEFAULT_REVIEW_PRESSURE_DAILY_CAP)
-                .coerceIn(10, 500)
+                .coerceIn(10, 500),
+            swipeGestureGuideShown = prefs[KEY_SWIPE_GESTURE_GUIDE_SHOWN] ?: DEFAULT_SWIPE_GESTURE_GUIDE_SHOWN
         )
     }
 
@@ -70,6 +73,10 @@ class SettingsRepository(private val context: Context) {
         dataStore.edit { prefs -> prefs[KEY_REVIEW_PRESSURE_DAILY_CAP] = cap.coerceIn(10, 500) }
     }
 
+    suspend fun updateSwipeGestureGuideShown(shown: Boolean) {
+        dataStore.edit { prefs -> prefs[KEY_SWIPE_GESTURE_GUIDE_SHOWN] = shown }
+    }
+
     companion object {
 
         private val KEY_NEW_WORDS_LIMIT = intPreferencesKey("new_words_limit")
@@ -78,5 +85,6 @@ class SettingsRepository(private val context: Context) {
         private val KEY_REVIEW_PRESSURE_RELIEF_ENABLED =
             booleanPreferencesKey("review_pressure_relief_enabled")
         private val KEY_REVIEW_PRESSURE_DAILY_CAP = intPreferencesKey("review_pressure_daily_cap")
+        private val KEY_SWIPE_GESTURE_GUIDE_SHOWN = booleanPreferencesKey("swipe_gesture_guide_shown")
     }
 }

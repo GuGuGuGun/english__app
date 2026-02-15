@@ -24,7 +24,9 @@ interface DailyStatsDao {
                SUM(new_words_count) AS new_words_count,
                SUM(review_words_count) AS review_words_count,
                SUM(spell_practice_count) AS spell_practice_count,
-               SUM(duration_millis) AS duration_millis
+               SUM(duration_millis) AS duration_millis,
+               SUM(gesture_easy_count) AS gesture_easy_count,
+               SUM(gesture_notebook_count) AS gesture_notebook_count
         FROM tb_daily_stats
         WHERE date BETWEEN :startDate AND :endDate
         GROUP BY date

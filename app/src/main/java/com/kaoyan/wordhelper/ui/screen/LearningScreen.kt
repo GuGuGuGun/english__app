@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -16,8 +17,10 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -49,6 +53,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -60,21 +68,27 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kaoyan.wordhelper.R
 import com.kaoyan.wordhelper.data.entity.Word
 import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.model.AIContentType
@@ -87,7 +101,12 @@ import com.kaoyan.wordhelper.ui.theme.KnownGreen
 import com.kaoyan.wordhelper.ui.viewmodel.LearningAiState
 import com.kaoyan.wordhelper.ui.viewmodel.LearningViewModel
 import com.kaoyan.wordhelper.util.DateUtils
+import com.kaoyan.wordhelper.util.GestureHandler
 import com.kaoyan.wordhelper.util.Sm2Scheduler
+import com.kaoyan.wordhelper.util.SwipeAction
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -110,9 +129,14 @@ fun LearningScreen(
     val canRelieveReviewPressure by viewModel.canRelieveReviewPressure.collectAsStateWithLifecycle()
     val reviewPressureDailyCap by viewModel.reviewPressureDailyCap.collectAsStateWithLifecycle()
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
+    val cachedExampleContent by viewModel.cachedExampleContent.collectAsStateWithLifecycle()
+    val cachedMemoryAidContent by viewModel.cachedMemoryAidContent.collectAsStateWithLifecycle()
     val memoryAidSuggestionWordId by viewModel.memoryAidSuggestionWordId.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val swipeSnackbarEvent by viewModel.swipeSnackbarEvent.collectAsStateWithLifecycle()
+    val showSwipeGuide by viewModel.showSwipeGuide.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
     var showSheet by remember { mutableStateOf(false) }
     var showRemoveDialog by remember { mutableStateOf(false) }
@@ -122,6 +146,7 @@ fun LearningScreen(
     var isCardFlipped by remember { mutableStateOf(false) }
     var lastRating by remember { mutableStateOf<StudyRating?>(null) }
     var learningMode by rememberSaveable { mutableStateOf(initialMode) }
+    var hideSwipeGuideInSession by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(currentWord?.id) {
         showReviewDialog = false
@@ -145,11 +170,48 @@ fun LearningScreen(
         viewModel.refreshAiAvailability()
     }
 
+    LaunchedEffect(showAiAssistantPage, currentWord?.id) {
+        if (showAiAssistantPage && currentWord != null) {
+            viewModel.loadCachedAiForCurrentWord()
+        }
+    }
+
     LaunchedEffect(message) {
         message?.let {
             Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
             viewModel.clearMessage()
         }
+    }
+
+    LaunchedEffect(swipeSnackbarEvent?.id) {
+        val event = swipeSnackbarEvent ?: return@LaunchedEffect
+        val result = if (event.undoToken != null) {
+            val dismissJob = launch {
+                delay(3_000)
+                snackbarHostState.currentSnackbarData?.dismiss()
+            }
+            val snackbarResult = snackbarHostState.showSnackbar(
+                message = event.message,
+                actionLabel = event.actionLabel,
+                duration = SnackbarDuration.Indefinite
+            )
+            dismissJob.cancel()
+            snackbarResult
+        } else {
+            snackbarHostState.showSnackbar(
+                message = event.message,
+                actionLabel = event.actionLabel,
+                duration = SnackbarDuration.Short
+            )
+        }
+        if (event.undoToken != null) {
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.undoSwipeTooEasy(event.undoToken)
+            } else {
+                viewModel.dismissSwipeUndo(event.undoToken)
+            }
+        }
+        viewModel.consumeSwipeSnackbarEvent(event.id)
     }
 
     fun handleAnswer(rating: StudyRating, removeFromNewWords: Boolean = false) {
@@ -228,6 +290,21 @@ fun LearningScreen(
         )
     }
 
+    if (
+        showSwipeGuide &&
+        !hideSwipeGuideInSession &&
+        learningMode == LearningMode.RECOGNITION &&
+        currentWord != null
+    ) {
+        SwipeGestureCoachMarkDialog(
+            onDismiss = { hideSwipeGuideInSession = true },
+            onNeverShowAgain = {
+                hideSwipeGuideInSession = true
+                viewModel.dismissSwipeGuide()
+            }
+        )
+    }
+
     val nextReviewTime = currentProgress?.nextReviewTime ?: 0L
     val reviewTag = DateUtils.reviewTag(nextReviewTime)
     val reviewDescription = DateUtils.reviewDescription(nextReviewTime)
@@ -276,6 +353,8 @@ fun LearningScreen(
         RecognitionAiAssistantPage(
             word = currentWord!!,
             aiState = aiState,
+            cachedExampleContent = cachedExampleContent,
+            cachedMemoryAidContent = cachedMemoryAidContent,
             showMemoryAidSuggestion = memoryAidSuggestionWordId == currentWord!!.id,
             canGenerateExample = isCardFlipped,
             onBack = { showAiAssistantPage = false },
@@ -285,183 +364,201 @@ fun LearningScreen(
         return
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            TextButton(onClick = { showSheet = true }) {
-                AnimatedContent(
-                    targetState = activeBook?.name ?: "暂无词书",
-                    transitionSpec = {
-                        fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200))
-                    },
-                    label = "activeBookName"
-                ) { title ->
-                    Text(text = title, modifier = Modifier.testTag("learning_book_title"))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = { showSheet = true }) {
+                    AnimatedContent(
+                        targetState = activeBook?.name ?: "暂无词书",
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200))
+                        },
+                        label = "activeBookName"
+                    ) { title ->
+                        Text(text = title, modifier = Modifier.testTag("learning_book_title"))
+                    }
+                    Icon(imageVector = Icons.Filled.KeyboardArrowDown, contentDescription = null)
                 }
-                Icon(imageVector = Icons.Filled.KeyboardArrowDown, contentDescription = null)
+                val countText = if (totalCount > 0) "$currentIndex/$totalCount" else "0/0"
+                Text(
+                    text = countText,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("learning_count_text")
+                )
             }
-            val countText = if (totalCount > 0) "$currentIndex/$totalCount" else "0/0"
-            Text(
-                text = countText,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.testTag("learning_count_text")
-            )
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-
-        TabRow(selectedTabIndex = learningMode.ordinal) {
-            Tab(
-                selected = learningMode == LearningMode.RECOGNITION,
-                onClick = {
-                    learningMode = LearningMode.RECOGNITION
-                    onModeChange(learningMode)
-                },
-                modifier = Modifier.testTag("learning_mode_recognition"),
-                text = { Text(text = "认词模式") }
-            )
-            Tab(
-                selected = learningMode == LearningMode.SPELLING,
-                onClick = {
-                    learningMode = LearningMode.SPELLING
-                    onModeChange(learningMode)
-                },
-                modifier = Modifier.testTag("learning_mode_spelling"),
-                text = { Text(text = "拼写模式") }
-            )
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-        Spacer(modifier = Modifier.height(4.dp))
-        if (canRelieveReviewPressure) {
-            ReviewPressureReliefBanner(
-                dueReviewCount = dueReviewCount,
-                dailyCap = reviewPressureDailyCap,
-                onRelieve = viewModel::disperseReviewPressure,
-                enabled = !isAnswering
-            )
             Spacer(modifier = Modifier.height(12.dp))
-        }
 
-
-        if (currentWord == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(text = "暂无单词", style = MaterialTheme.typography.bodyLarge)
+            TabRow(selectedTabIndex = learningMode.ordinal) {
+                Tab(
+                    selected = learningMode == LearningMode.RECOGNITION,
+                    onClick = {
+                        learningMode = LearningMode.RECOGNITION
+                        onModeChange(learningMode)
+                    },
+                    modifier = Modifier.testTag("learning_mode_recognition"),
+                    text = { Text(text = "认词模式") }
+                )
+                Tab(
+                    selected = learningMode == LearningMode.SPELLING,
+                    onClick = {
+                        learningMode = LearningMode.SPELLING
+                        onModeChange(learningMode)
+                    },
+                    modifier = Modifier.testTag("learning_mode_spelling"),
+                    text = { Text(text = "拼写模式") }
+                )
             }
-        } else {
-            when (learningMode) {
-                LearningMode.RECOGNITION -> {
-                    val cardState = WordCardState(currentWord!!, isInNewWords)
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(RECOGNITION_SECTION_SPACING)
-                    ) {
-                        RecognitionHintBanner()
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(4.dp))
+            if (canRelieveReviewPressure) {
+                ReviewPressureReliefBanner(
+                    dueReviewCount = dueReviewCount,
+                    dailyCap = reviewPressureDailyCap,
+                    onRelieve = viewModel::disperseReviewPressure,
+                    enabled = !isAnswering
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            if (currentWord == null) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(text = "暂无单词", style = MaterialTheme.typography.bodyLarge)
+                }
+            } else {
+                when (learningMode) {
+                    LearningMode.RECOGNITION -> {
+                        val cardState = WordCardState(currentWord!!, isInNewWords)
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f)
-                                .verticalScroll(rememberScrollState()),
+                                .weight(1f),
                             verticalArrangement = Arrangement.spacedBy(RECOGNITION_SECTION_SPACING)
                         ) {
-                            AnimatedContent(
-                                targetState = cardState,
-                                transitionSpec = { wordCardTransition(lastRating) },
-                                label = "wordCardTransition"
-                            ) { state ->
-                                WordCard(
-                                    word = state.word,
-                                    isInNewWords = state.isInNewWords,
-                                    onToggleNewWords = viewModel::toggleNewWord,
-                                    reviewTag = reviewTag,
-                                    onReviewTagClick = { showReviewDialog = true },
-                                    aiAvailable = aiState.isAvailable,
-                                    aiSuggested = memoryAidSuggestionWordId == currentWord!!.id,
-                                    onAiEntryClick = ::openAiEntry,
-                                    onFlipChanged = { isCardFlipped = it },
-                                    starEnabled = !isAnswering,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("learning_word_card")
-                                )
-                            }
-                        }
-                        RecognitionActionPanel(
-                            isAnswering = isAnswering,
-                            isNewWordsBook = isNewWordsBook,
-                            onAgain = { handleAnswer(StudyRating.AGAIN) },
-                            onHard = { handleAnswer(StudyRating.HARD) },
-                            onGood = {
-                                if (isNewWordsBook) {
-                                    showRemoveDialog = true
-                                } else {
-                                    handleAnswer(StudyRating.GOOD)
+                            RecognitionHintBanner()
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(RECOGNITION_SECTION_SPACING)
+                            ) {
+                                AnimatedContent(
+                                    targetState = cardState,
+                                    transitionSpec = { wordCardTransition(lastRating) },
+                                    label = "wordCardTransition"
+                                ) { state ->
+                                    SwipeableWordCard(
+                                        enabled = !isAnswering,
+                                        onSwipeTooEasy = viewModel::onSwipeTooEasy,
+                                        onSwipeAddToNotebook = viewModel::onSwipeAddToNotebook,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("learning_word_card")
+                                    ) { swipeModifier ->
+                                        WordCard(
+                                            word = state.word,
+                                            isInNewWords = state.isInNewWords,
+                                            onToggleNewWords = viewModel::toggleNewWord,
+                                            reviewTag = reviewTag,
+                                            onReviewTagClick = { showReviewDialog = true },
+                                            aiAvailable = aiState.isAvailable,
+                                            aiSuggested = memoryAidSuggestionWordId == currentWord!!.id,
+                                            onAiEntryClick = ::openAiEntry,
+                                            onFlipChanged = { isCardFlipped = it },
+                                            starEnabled = !isAnswering,
+                                            modifier = swipeModifier
+                                        )
+                                    }
                                 }
                             }
-                        )
-                        LearningProgressPanel(
-                            currentIndex = currentIndex,
-                            totalCount = totalCount,
-                            learningMode = learningMode
-                        )
+                            RecognitionActionPanel(
+                                isAnswering = isAnswering,
+                                isNewWordsBook = isNewWordsBook,
+                                onAgain = { handleAnswer(StudyRating.AGAIN) },
+                                onHard = { handleAnswer(StudyRating.HARD) },
+                                onGood = {
+                                    if (isNewWordsBook) {
+                                        showRemoveDialog = true
+                                    } else {
+                                        handleAnswer(StudyRating.GOOD)
+                                    }
+                                }
+                            )
+                            LearningProgressPanel(
+                                currentIndex = currentIndex,
+                                totalCount = totalCount,
+                                learningMode = learningMode
+                            )
+                        }
                     }
-                }
-                LearningMode.SPELLING -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        SpellingScreen(
-                            word = currentWord,
-                            presentationKey = currentIndex,
-                            isSubmitting = isAnswering,
-                            onSpellingResolved = viewModel::submitSpellingOutcome,
-                            onContinueAfterFailure = viewModel::continueAfterSpellingFailure,
-                            aiAssistAvailable = aiState.isAvailable,
-                            aiAssistLoading = aiState.isLoading && aiState.activeType == AIContentType.MEMORY_AID,
-                            aiAssistText = if (aiState.activeType == AIContentType.MEMORY_AID) {
-                                aiState.content.ifBlank { null }
-                            } else {
-                                null
-                            },
-                            aiAssistError = if (aiState.activeType == AIContentType.MEMORY_AID) {
-                                aiState.error
-                            } else {
-                                null
-                            },
-                            onRequestAiAssist = { forceRefresh ->
-                                viewModel.requestAiMemoryAid(forceRefresh)
-                            },
+
+                    LearningMode.SPELLING -> {
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f)
-                        )
-                        LearningProgressPanel(
-                            currentIndex = currentIndex,
-                            totalCount = totalCount,
-                            learningMode = learningMode
-                        )
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            SpellingScreen(
+                                word = currentWord,
+                                presentationKey = currentIndex,
+                                isSubmitting = isAnswering,
+                                onSpellingResolved = viewModel::submitSpellingOutcome,
+                                onContinueAfterFailure = viewModel::continueAfterSpellingFailure,
+                                aiAssistAvailable = aiState.isAvailable,
+                                aiAssistLoading = aiState.isLoading && aiState.activeType == AIContentType.MEMORY_AID,
+                                aiAssistText = if (aiState.activeType == AIContentType.MEMORY_AID) {
+                                    aiState.content.ifBlank { null }
+                                } else {
+                                    null
+                                },
+                                aiAssistError = if (aiState.activeType == AIContentType.MEMORY_AID) {
+                                    aiState.error
+                                } else {
+                                    null
+                                },
+                                onRequestAiAssist = { forceRefresh ->
+                                    viewModel.requestAiMemoryAid(forceRefresh)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                            )
+                            LearningProgressPanel(
+                                currentIndex = currentIndex,
+                                totalCount = totalCount,
+                                learningMode = learningMode
+                            )
+                        }
                     }
                 }
             }
         }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp)
+        )
     }
 }
 
 private const val SM2_DESCRIPTION =
     "SM-2 调度说明：不认识会在会话内重试，模糊保守推进，认识按记忆因子增长间隔。"
 private val RECOGNITION_SECTION_SPACING = 12.dp
+private const val SWIPE_TRIGGER_RATIO = 0.3f
+private const val SWIPE_ACTIVE_ZONE_RATIO = 0.8f
 
 enum class LearningMode {
     RECOGNITION,
@@ -472,6 +569,218 @@ private data class WordCardState(
     val word: Word,
     val isInNewWords: Boolean
 )
+
+private enum class SwipeDirection {
+    LEFT,
+    RIGHT,
+    NONE
+}
+
+@Composable
+private fun SwipeableWordCard(
+    enabled: Boolean,
+    onSwipeTooEasy: () -> Unit,
+    onSwipeAddToNotebook: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable (Modifier) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    var offsetX by remember { mutableStateOf(0f) }
+    var allowDrag by remember { mutableStateOf(false) }
+    var thresholdHapticTriggered by remember { mutableStateOf(false) }
+
+    BoxWithConstraints(modifier = modifier) {
+        val density = LocalDensity.current
+        val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
+        val threshold = GestureHandler.triggerThreshold(widthPx, SWIPE_TRIGGER_RATIO)
+        val edgeReserved = GestureHandler.edgeReservedWidth(widthPx, SWIPE_ACTIVE_ZONE_RATIO)
+        val swipeProgress = (abs(offsetX) / threshold).coerceIn(0f, 1f)
+
+        SwipeBackgroundIndicator(
+            offsetX = offsetX,
+            progress = swipeProgress,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(offsetX.roundToInt(), 0) }
+                .pointerInput(enabled, widthPx) {
+                    if (!enabled) return@pointerInput
+                    detectHorizontalDragGestures(
+                        onDragStart = { startOffset ->
+                            allowDrag = GestureHandler.isStartInActiveZone(
+                                startX = startOffset.x,
+                                widthPx = widthPx,
+                                activeZoneRatio = SWIPE_ACTIVE_ZONE_RATIO
+                            )
+                            thresholdHapticTriggered = false
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            if (!allowDrag) return@detectHorizontalDragGestures
+                            change.consume()
+                            offsetX = (offsetX + dragAmount).coerceIn(-widthPx, widthPx)
+                            if (!thresholdHapticTriggered && abs(offsetX) >= threshold) {
+                                thresholdHapticTriggered = true
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            }
+                        },
+                        onDragEnd = {
+                            val finalOffset = offsetX
+                            allowDrag = false
+                            thresholdHapticTriggered = false
+                            when (GestureHandler.resolveSwipeAction(finalOffset, threshold)) {
+                                SwipeAction.TOO_EASY -> {
+                                    offsetX = 0f
+                                    onSwipeTooEasy()
+                                }
+
+                                SwipeAction.ADD_TO_NOTEBOOK -> {
+                                    offsetX = 0f
+                                    onSwipeAddToNotebook()
+                                }
+
+                                SwipeAction.NONE -> {
+                                    scope.launch {
+                                        animate(finalOffset, 0f) { value, _ ->
+                                            offsetX = value
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            allowDrag = false
+                            thresholdHapticTriggered = false
+                            val finalOffset = offsetX
+                            scope.launch {
+                                animate(finalOffset, 0f) { value, _ ->
+                                    offsetX = value
+                                }
+                            }
+                        }
+                    )
+                }
+        ) {
+            content(Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun SwipeBackgroundIndicator(
+    offsetX: Float,
+    progress: Float,
+    modifier: Modifier = Modifier
+) {
+    val direction = when {
+        offsetX < 0f -> SwipeDirection.LEFT
+        offsetX > 0f -> SwipeDirection.RIGHT
+        else -> SwipeDirection.NONE
+    }
+    val backgroundColor = when (direction) {
+        SwipeDirection.LEFT -> KnownGreen.copy(alpha = 0.08f + 0.22f * progress)
+        SwipeDirection.RIGHT -> FuzzyYellow.copy(alpha = 0.10f + 0.24f * progress)
+        SwipeDirection.NONE -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.10f)
+    }
+
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        color = backgroundColor
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 18.dp),
+            contentAlignment = when (direction) {
+                SwipeDirection.LEFT -> Alignment.CenterStart
+                SwipeDirection.RIGHT -> Alignment.CenterEnd
+                SwipeDirection.NONE -> Alignment.Center
+            }
+        ) {
+            when (direction) {
+                SwipeDirection.LEFT -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_swipe_left),
+                            contentDescription = null,
+                            tint = KnownGreen.copy(alpha = 0.4f + 0.6f * progress)
+                        )
+                        Text(
+                            text = "太简单（30天）",
+                            color = KnownGreen.copy(alpha = 0.5f + 0.5f * progress),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
+                SwipeDirection.RIGHT -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_swipe_right),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f + 0.5f * progress)
+                        )
+                        Text(
+                            text = "加入生词本",
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f + 0.5f * progress),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
+                SwipeDirection.NONE -> {
+                    Text(
+                        text = "左滑太简单 · 右滑加入生词本",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwipeGestureCoachMarkDialog(
+    onDismiss: () -> Unit,
+    onNeverShowAgain: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = "手势快捷操作") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(text = "左滑超过 30%：标记“太简单”，30 天后复习。")
+                Text(text = "右滑超过 30%：快速加入生词本，并切换到下一词。")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = "知道了",
+                    modifier = Modifier.testTag("learning_swipe_guide_confirm")
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onNeverShowAgain) {
+                Text(
+                    text = "不再提示",
+                    modifier = Modifier.testTag("learning_swipe_guide_never_again")
+                )
+            }
+        }
+    )
+}
 
 @Composable
 private fun LearningProgressPanel(
@@ -541,7 +850,7 @@ private fun RecognitionHintBanner(modifier: Modifier = Modifier) {
         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
     ) {
         Text(
-            text = "先判断是否认识，再翻卡片核对释义与例句。",
+            text = "先判断是否认识，再翻卡核对释义；支持左滑“太简单”、右滑“加入生词本”。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
@@ -553,6 +862,8 @@ private fun RecognitionHintBanner(modifier: Modifier = Modifier) {
 private fun RecognitionAiAssistantPage(
     word: Word,
     aiState: LearningAiState,
+    cachedExampleContent: String,
+    cachedMemoryAidContent: String,
     showMemoryAidSuggestion: Boolean,
     canGenerateExample: Boolean,
     onBack: () -> Unit,
@@ -560,9 +871,21 @@ private fun RecognitionAiAssistantPage(
     onGenerateMemoryAid: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var exampleContent by remember(word.id) { mutableStateOf("") }
-    var memoryAidContent by remember(word.id) { mutableStateOf("") }
+    var exampleContent by remember(word.id) { mutableStateOf(cachedExampleContent) }
+    var memoryAidContent by remember(word.id) { mutableStateOf(cachedMemoryAidContent) }
     val scrollState = rememberScrollState()
+
+    LaunchedEffect(cachedExampleContent) {
+        if (cachedExampleContent.isNotBlank()) {
+            exampleContent = cachedExampleContent
+        }
+    }
+
+    LaunchedEffect(cachedMemoryAidContent) {
+        if (cachedMemoryAidContent.isNotBlank()) {
+            memoryAidContent = cachedMemoryAidContent
+        }
+    }
 
     LaunchedEffect(aiState.activeType, aiState.content) {
         when (aiState.activeType) {

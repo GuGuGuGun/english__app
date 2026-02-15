@@ -7,7 +7,10 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "tb_progress",
-    indices = [Index(value = ["word_id", "book_id"], unique = true)]
+    indices = [
+        Index(value = ["word_id", "book_id"], unique = true),
+        Index(value = ["next_review_time"])
+    ]
 )
 data class Progress(
     @PrimaryKey(autoGenerate = true)
@@ -29,7 +32,11 @@ data class Progress(
     @ColumnInfo(name = "spell_correct_count")
     val spellCorrectCount: Int = 0,
     @ColumnInfo(name = "spell_wrong_count")
-    val spellWrongCount: Int = 0
+    val spellWrongCount: Int = 0,
+    @ColumnInfo(name = "marked_easy_count")
+    val markedEasyCount: Int = 0,
+    @ColumnInfo(name = "last_easy_time")
+    val lastEasyTime: Long = 0L
 ) {
     companion object {
         const val STATUS_NEW = 0

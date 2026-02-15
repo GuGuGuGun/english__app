@@ -11,5 +11,9 @@ data class DailyStatsAggregate(
     @ColumnInfo(name = "spell_practice_count")
     val spellPracticeCount: Int,
     @ColumnInfo(name = "duration_millis")
-    val durationMillis: Long
+    val durationMillis: Long,
+    @ColumnInfo(name = "gesture_easy_count")
+    val gestureEasyCount: Int,
+    @ColumnInfo(name = "gesture_notebook_count")
+    val gestureNotebookCount: Int
 )

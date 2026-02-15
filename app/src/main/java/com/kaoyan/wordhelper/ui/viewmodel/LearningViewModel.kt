@@ -10,6 +10,7 @@ import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.data.entity.Word
 import com.kaoyan.wordhelper.data.model.SpellingOutcome
 import com.kaoyan.wordhelper.data.model.StudyRating
+import com.kaoyan.wordhelper.data.repository.AddToNewWordsSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +39,18 @@ data class LearningAiState(
         get() = isEnabled && isConfigured
 }
 
+data class SwipeSnackbarEvent(
+    val id: Long,
+    val message: String,
+    val actionLabel: String? = null,
+    val undoToken: Long? = null
+)
+
+private data class TooEasyUndoPayload(
+    val wordId: Long,
+    val snapshots: List<Progress>
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class LearningViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as KaoyanWordApp).repository
@@ -46,6 +59,10 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     private val aiRepository = (application as KaoyanWordApp).aiRepository
 
     private val immediateRetryQueue = ArrayDeque<Word>()
+    private val sessionSkippedWordIds = LinkedHashSet<Long>()
+    private val pendingTooEasyUndo = mutableMapOf<Long, TooEasyUndoPayload>()
+    private var swipeSnackbarIdCounter = 0L
+    private var undoTokenCounter = 0L
     private var queueBookId: Long? = null
     private var pendingFailedWordId: Long? = null
     private var answeredInSession = 0
@@ -57,9 +74,18 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     val dueReviewCount: StateFlow<Int> = _dueReviewCount.asStateFlow()
     private val _aiState = MutableStateFlow(LearningAiState())
     val aiState: StateFlow<LearningAiState> = _aiState.asStateFlow()
+    private val _cachedExampleContent = MutableStateFlow("")
+    val cachedExampleContent: StateFlow<String> = _cachedExampleContent.asStateFlow()
+    private val _cachedMemoryAidContent = MutableStateFlow("")
+    val cachedMemoryAidContent: StateFlow<String> = _cachedMemoryAidContent.asStateFlow()
     private val _memoryAidSuggestionWordId = MutableStateFlow<Long?>(null)
     val memoryAidSuggestionWordId: StateFlow<Long?> = _memoryAidSuggestionWordId.asStateFlow()
+    private val _swipeSnackbarEvent = MutableStateFlow<SwipeSnackbarEvent?>(null)
+    val swipeSnackbarEvent: StateFlow<SwipeSnackbarEvent?> = _swipeSnackbarEvent.asStateFlow()
 
+    val showSwipeGuide: StateFlow<Boolean> = settingsRepository.settingsFlow
+        .map { !it.swipeGestureGuideShown }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     val books: StateFlow<List<Book>> = repository.getAllBooks()
         .map { list ->
@@ -162,6 +188,8 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
 
     fun switchBook(bookId: Long) {
         immediateRetryQueue.clear()
+        sessionSkippedWordIds.clear()
+        pendingTooEasyUndo.clear()
         queueBookId = null
         pendingFailedWordId = null
         answeredInSession = 0
@@ -178,7 +206,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             if (exists) {
                 repository.removeFromNewWords(word.id)
             } else {
-                repository.addToNewWords(word.id)
+                repository.addToNewWords(word.id, AddToNewWordsSource.BUTTON)
             }
         }
     }
@@ -189,6 +217,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         launchSubmit {
             pendingFailedWordId = null
             removeFromImmediateQueue(word.id)
+            removeSessionSkippedWord(word.id)
             withContext(Dispatchers.IO) {
                 repository.applyStudyResult(word.id, book.id, rating)
             }
@@ -210,6 +239,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             pendingFailedWordId = null
             _memoryAidSuggestionWordId.value = null
             removeFromImmediateQueue(word.id)
+            removeSessionSkippedWord(word.id)
             withContext(Dispatchers.IO) {
                 repository.removeFromNewWords(word.id)
                 repository.applyStudyResult(word.id, book.id, rating)
@@ -235,6 +265,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 _memoryAidSuggestionWordId.value = null
             }
             removeFromImmediateQueue(word.id)
+            removeSessionSkippedWord(word.id)
             withContext(Dispatchers.IO) {
                 repository.applySpellingOutcome(
                     wordId = word.id,
@@ -266,10 +297,96 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun onSwipeTooEasy() {
+        val word = _currentWord.value ?: return
+        val book = activeBook.value ?: return
+        launchSubmit {
+            pendingFailedWordId = null
+            _memoryAidSuggestionWordId.value = null
+            removeFromImmediateQueue(word.id)
+            removeSessionSkippedWord(word.id)
+            val snapshots = withContext(Dispatchers.IO) {
+                repository.getProgressSnapshotsForWord(word.id)
+            }
+            val marked = withContext(Dispatchers.IO) {
+                repository.markWordAsTooEasy(word.id, book.id)
+            }
+            if (!marked) {
+                emitSwipeSnackbar("标记失败，请重试")
+                return@launchSubmit
+            }
+            markAnswered()
+            val undoToken = registerTooEasyUndo(word.id, snapshots)
+            emitSwipeSnackbar(
+                message = "已标记为太简单，30天后复习",
+                actionLabel = "撤销",
+                undoToken = undoToken
+            )
+            loadQueueForBook(book, newWordsLimit.value)
+        }
+    }
+
+    fun onSwipeAddToNotebook() {
+        val word = _currentWord.value ?: return
+        val book = activeBook.value ?: return
+        launchSubmit {
+            pendingFailedWordId = null
+            _memoryAidSuggestionWordId.value = null
+            removeFromImmediateQueue(word.id)
+            removeSessionSkippedWord(word.id)
+            val inserted = withContext(Dispatchers.IO) {
+                repository.addToNewWords(word.id, AddToNewWordsSource.GESTURE)
+            }
+            skipWordInSession(word.id)
+            markAnswered()
+            emitSwipeSnackbar(
+                message = if (inserted) "已加入生词本" else "已在生词本中"
+            )
+            loadQueueForBook(book, newWordsLimit.value)
+        }
+    }
+
+    fun undoSwipeTooEasy(undoToken: Long) {
+        val payload = pendingTooEasyUndo[undoToken] ?: return
+        launchSubmit {
+            withContext(Dispatchers.IO) {
+                repository.restoreProgressSnapshots(
+                    wordId = payload.wordId,
+                    snapshots = payload.snapshots,
+                    rollbackGestureEasy = true
+                )
+            }
+            pendingTooEasyUndo.remove(undoToken)
+            answeredInSession = (answeredInSession - 1).coerceAtLeast(0)
+            val book = activeBook.value
+            if (book != null) {
+                loadQueueForBook(book, newWordsLimit.value)
+            }
+            emitSwipeSnackbar("已撤销“太简单”")
+        }
+    }
+
+    fun dismissSwipeUndo(undoToken: Long) {
+        pendingTooEasyUndo.remove(undoToken)
+    }
+
+    fun consumeSwipeSnackbarEvent(eventId: Long) {
+        if (_swipeSnackbarEvent.value?.id == eventId) {
+            _swipeSnackbarEvent.value = null
+        }
+    }
+
+    fun dismissSwipeGuide() {
+        viewModelScope.launch {
+            settingsRepository.updateSwipeGestureGuideShown(true)
+        }
+    }
+
     fun refreshQueue() {
         val book = activeBook.value ?: return
         viewModelScope.launch {
             pendingFailedWordId = null
+            sessionSkippedWordIds.clear()
             answeredInSession = 0
             loadQueueForBook(book, newWordsLimit.value)
         }
@@ -302,6 +419,24 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 isEnabled = config.enabled,
                 isConfigured = config.isConfigured()
             )
+        }
+    }
+
+    fun loadCachedAiForCurrentWord() {
+        val word = _currentWord.value ?: run {
+            _cachedExampleContent.value = ""
+            _cachedMemoryAidContent.value = ""
+            return
+        }
+        viewModelScope.launch {
+            val cachedExample = withContext(Dispatchers.IO) {
+                aiRepository.getCachedExample(word.id, word.word)
+            }.orEmpty()
+            val cachedMemoryAid = withContext(Dispatchers.IO) {
+                aiRepository.getCachedMemoryAid(word.id, word.word)
+            }.orEmpty()
+            _cachedExampleContent.value = cachedExample
+            _cachedMemoryAidContent.value = cachedMemoryAid
         }
     }
 
@@ -339,6 +474,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             }
             result.fold(
                 onSuccess = { content ->
+                    _cachedExampleContent.value = content
                     _aiState.value = _aiState.value.copy(
                         activeType = AIContentType.EXAMPLE,
                         content = content,
@@ -395,6 +531,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             }
             result.fold(
                 onSuccess = { content ->
+                    _cachedMemoryAidContent.value = content
                     _aiState.value = _aiState.value.copy(
                         activeType = AIContentType.MEMORY_AID,
                         content = content,
@@ -421,6 +558,8 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     private suspend fun loadQueueForBook(book: Book?, newWordsLimit: Int) {
         if (book == null) {
             immediateRetryQueue.clear()
+            sessionSkippedWordIds.clear()
+            pendingTooEasyUndo.clear()
             queueBookId = null
             pendingFailedWordId = null
             answeredInSession = 0
@@ -430,6 +569,8 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         }
         if (queueBookId != book.id) {
             immediateRetryQueue.clear()
+            sessionSkippedWordIds.clear()
+            pendingTooEasyUndo.clear()
             queueBookId = book.id
             pendingFailedWordId = null
             answeredInSession = 0
@@ -440,7 +581,9 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             repository.getStudyQueue(book, effectiveNewWordLimit) to dueCount
         }
         _dueReviewCount.value = dueCount
-        updateQueue(mergeWithImmediateRetryQueue(queue))
+        val mergedQueue = mergeWithImmediateRetryQueue(queue)
+            .filterNot { it.id in sessionSkippedWordIds }
+        updateQueue(mergedQueue)
     }
 
     private fun updateQueue(list: List<Word>) {
@@ -456,6 +599,8 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         val nextWord = list.firstOrNull()
         _currentWord.value = nextWord
         if (oldWordId != nextWord?.id) {
+            _cachedExampleContent.value = ""
+            _cachedMemoryAidContent.value = ""
             _aiState.value = _aiState.value.copy(
                 isLoading = false,
                 activeType = null,
@@ -467,6 +612,38 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
 
     private fun markAnswered() {
         answeredInSession += 1
+    }
+
+    private fun skipWordInSession(wordId: Long) {
+        sessionSkippedWordIds.add(wordId)
+    }
+
+    private fun removeSessionSkippedWord(wordId: Long) {
+        sessionSkippedWordIds.remove(wordId)
+    }
+
+    private fun emitSwipeSnackbar(
+        message: String,
+        actionLabel: String? = null,
+        undoToken: Long? = null
+    ) {
+        swipeSnackbarIdCounter += 1
+        _swipeSnackbarEvent.value = SwipeSnackbarEvent(
+            id = swipeSnackbarIdCounter,
+            message = message,
+            actionLabel = actionLabel,
+            undoToken = undoToken
+        )
+    }
+
+    private fun registerTooEasyUndo(wordId: Long, snapshots: List<Progress>): Long {
+        undoTokenCounter += 1
+        val token = undoTokenCounter
+        pendingTooEasyUndo[token] = TooEasyUndoPayload(
+            wordId = wordId,
+            snapshots = snapshots
+        )
+        return token
     }
 
     private fun launchSubmit(block: suspend () -> Unit) {

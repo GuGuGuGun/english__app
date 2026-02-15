@@ -78,6 +78,22 @@ class AIRepository internal constructor(
         )
     }
 
+    suspend fun getCachedExample(wordId: Long, word: String): String? {
+        return getCachedContent(
+            wordId = wordId,
+            queryContent = word.trim(),
+            type = AIContentType.EXAMPLE
+        )
+    }
+
+    suspend fun getCachedMemoryAid(wordId: Long, word: String): String? {
+        return getCachedContent(
+            wordId = wordId,
+            queryContent = word.trim(),
+            type = AIContentType.MEMORY_AID
+        )
+    }
+
     suspend fun getAIContent(
         wordId: Long?,
         queryContent: String,
@@ -127,6 +143,24 @@ class AIRepository internal constructor(
             if (throwable is CancellationException) throw throwable
             Result.failure(Exception(mapErrorMessage(throwable), throwable))
         }
+    }
+
+    private suspend fun getCachedContent(
+        wordId: Long?,
+        queryContent: String,
+        type: AIContentType
+    ): String? {
+        val normalizedQuery = queryContent.trim()
+        if (normalizedQuery.isBlank()) return null
+        cacheDao.getByQueryAndType(normalizedQuery, type.name)?.let {
+            return it.aiContent
+        }
+        if (wordId != null) {
+            cacheDao.getByWordIdAndType(wordId, type.name)?.let {
+                return it.aiContent
+            }
+        }
+        return null
     }
 
     suspend fun testConnection(configOverride: AIConfig? = null): Result<String> {

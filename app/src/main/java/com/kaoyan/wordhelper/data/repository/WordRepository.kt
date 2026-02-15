@@ -33,6 +33,7 @@ class WordRepository(private val database: AppDatabase) {
     private val studyLogDao = database.studyLogDao()
     private val dailyStatsDao = database.dailyStatsDao()
     private val earlyReviewDao = database.earlyReviewDao()
+    private val forecastCacheDao = database.forecastCacheDao()
 
     // ---- Book ----
 
@@ -226,6 +227,33 @@ class WordRepository(private val database: AppDatabase) {
         return progressDao.getGlobalProgress(wordId)
     }
 
+    suspend fun getProgressSnapshotsForWord(wordId: Long): List<Progress> {
+        return progressDao.getProgressByWordIds(listOf(wordId))
+            .sortedWith(compareBy<Progress> { it.bookId }.thenBy { it.id })
+    }
+
+    suspend fun restoreProgressSnapshots(
+        wordId: Long,
+        snapshots: List<Progress>,
+        rollbackGestureEasy: Boolean = false
+    ) {
+        database.withTransaction {
+            progressDao.deleteByWordId(wordId)
+            snapshots.forEach { snapshot ->
+                progressDao.insert(
+                    snapshot.copy(
+                        id = 0,
+                        wordId = wordId
+                    )
+                )
+            }
+            if (rollbackGestureEasy) {
+                updateDailyStatsInternal(gestureEasyDelta = -1)
+            }
+            invalidateForecastCacheInternal()
+        }
+    }
+
     fun getLearnedCount(bookId: Long): Flow<Int> = progressDao.getLearnedCount(bookId)
 
     fun getMasteredCount(bookId: Long): Flow<Int> = progressDao.getMasteredCount(bookId)
@@ -265,6 +293,7 @@ class WordRepository(private val database: AppDatabase) {
                 progressDao.update(progress.copy(nextReviewTime = nextReviewTime))
                 earlyReviewDao.deleteByWordAndBook(progress.wordId, bookId)
             }
+            invalidateForecastCacheInternal()
             overflow.size
         }
     }
@@ -296,7 +325,9 @@ class WordRepository(private val database: AppDatabase) {
                     easeFactor = schedule.easeFactor,
                     reviewCount = reviewCount,
                     spellCorrectCount = existing?.spellCorrectCount ?: 0,
-                    spellWrongCount = existing?.spellWrongCount ?: 0
+                    spellWrongCount = existing?.spellWrongCount ?: 0,
+                    markedEasyCount = existing?.markedEasyCount ?: 0,
+                    lastEasyTime = existing?.lastEasyTime ?: 0L
                 )
                 if (existingByBook != null) {
                     progressDao.update(progress.copy(id = existingByBook.id))
@@ -312,6 +343,7 @@ class WordRepository(private val database: AppDatabase) {
                 newWordsDelta = if (isNewLearningCompletion) 1 else 0,
                 reviewWordsDelta = if (isReviewCompletion) 1 else 0
             )
+            invalidateForecastCacheInternal()
         }
     }
 
@@ -346,7 +378,9 @@ class WordRepository(private val database: AppDatabase) {
                     easeFactor = schedule.easeFactor,
                     reviewCount = reviewCount,
                     spellCorrectCount = spellCorrectCount,
-                    spellWrongCount = spellWrongCount
+                    spellWrongCount = spellWrongCount,
+                    markedEasyCount = existing?.markedEasyCount ?: 0,
+                    lastEasyTime = existing?.lastEasyTime ?: 0L
                 )
                 if (existingByBook != null) {
                     progressDao.update(progress.copy(id = existingByBook.id))
@@ -364,6 +398,7 @@ class WordRepository(private val database: AppDatabase) {
                 spellPracticeDelta = attemptCount.coerceAtLeast(1),
                 durationMillisDelta = durationMillis.coerceAtLeast(0L)
             )
+            invalidateForecastCacheInternal()
         }
     }
 
@@ -450,12 +485,65 @@ class WordRepository(private val database: AppDatabase) {
         return newWordRefDao.getAll().map { refs -> refs.map { it.wordId }.toSet() }
     }
 
-    suspend fun addToNewWords(wordId: Long): Boolean {
-        getOrCreateNewWordsBook()
-        if (newWordRefDao.exists(wordId)) return false
-        newWordRefDao.insert(NewWordRef(wordId = wordId))
-        updateNewWordsBookCount()
-        return true
+    suspend fun addToNewWords(wordId: Long, source: AddToNewWordsSource = AddToNewWordsSource.BUTTON): Boolean {
+        return database.withTransaction {
+            getOrCreateNewWordsBook()
+            val inserted = if (newWordRefDao.exists(wordId)) {
+                false
+            } else {
+                newWordRefDao.insert(NewWordRef(wordId = wordId))
+                updateNewWordsBookCount()
+                true
+            }
+            if (source == AddToNewWordsSource.GESTURE) {
+                updateDailyStatsInternal(gestureNotebookDelta = 1)
+            }
+            inserted
+        }
+    }
+
+    suspend fun markWordAsTooEasy(wordId: Long, bookId: Long): Boolean {
+        return database.withTransaction {
+            val linkedBookIds = (wordDao.getBookIdsByWordId(wordId) + bookId)
+                .distinct()
+                .filter { it > 0L }
+            if (linkedBookIds.isEmpty()) return@withTransaction false
+
+            val now = System.currentTimeMillis()
+            // "太简单" is a user override (hard intervention), not a standard SM-2 transition.
+            val nextReviewTime = Sm2Scheduler.nextReviewTimeByDays(30, now)
+            val globalProgress = progressDao.getGlobalProgress(wordId)
+
+            linkedBookIds.forEach { linkedBookId ->
+                val existingByBook = progressDao.getProgress(wordId, linkedBookId)
+                val base = existingByBook ?: globalProgress
+                val updated = Progress(
+                    id = existingByBook?.id ?: 0L,
+                    wordId = wordId,
+                    bookId = linkedBookId,
+                    status = Progress.STATUS_MASTERED,
+                    repetitions = maxOf(base?.repetitions ?: 0, 1),
+                    intervalDays = 30,
+                    nextReviewTime = nextReviewTime,
+                    easeFactor = base?.easeFactor ?: 2.5f,
+                    reviewCount = base?.reviewCount ?: 0,
+                    spellCorrectCount = base?.spellCorrectCount ?: 0,
+                    spellWrongCount = base?.spellWrongCount ?: 0,
+                    markedEasyCount = (base?.markedEasyCount ?: 0) + 1,
+                    lastEasyTime = now
+                )
+                if (existingByBook != null) {
+                    progressDao.update(updated.copy(id = existingByBook.id))
+                } else {
+                    progressDao.insert(updated)
+                }
+                earlyReviewDao.deleteByWordAndBook(wordId, linkedBookId)
+            }
+
+            updateDailyStatsInternal(gestureEasyDelta = 1)
+            invalidateForecastCacheInternal()
+            true
+        }
     }
 
     suspend fun removeFromNewWords(wordId: Long) {
@@ -501,7 +589,9 @@ class WordRepository(private val database: AppDatabase) {
                         wordId = wordId,
                         bookId = linkedBookId,
                         spellCorrectCount = spellCorrect,
-                        spellWrongCount = spellWrong
+                        spellWrongCount = spellWrong,
+                        markedEasyCount = existing?.markedEasyCount ?: 0,
+                        lastEasyTime = existing?.lastEasyTime ?: 0L
                     )
                 } else {
                     existingByBook.copy(
@@ -705,7 +795,9 @@ class WordRepository(private val database: AppDatabase) {
         newWordsDelta: Int = 0,
         reviewWordsDelta: Int = 0,
         spellPracticeDelta: Int = 0,
-        durationMillisDelta: Long = 0L
+        durationMillisDelta: Long = 0L,
+        gestureEasyDelta: Int = 0,
+        gestureNotebookDelta: Int = 0
     ) {
         val today = currentLearningDate().format(DATE_FORMATTER)
         val existing = dailyStatsDao.getOrCreate(today)
@@ -713,9 +805,15 @@ class WordRepository(private val database: AppDatabase) {
             newWordsCount = (existing.newWordsCount + newWordsDelta).coerceAtLeast(0),
             reviewWordsCount = (existing.reviewWordsCount + reviewWordsDelta).coerceAtLeast(0),
             spellPracticeCount = (existing.spellPracticeCount + spellPracticeDelta).coerceAtLeast(0),
-            durationMillis = (existing.durationMillis + durationMillisDelta).coerceAtLeast(0L)
+            durationMillis = (existing.durationMillis + durationMillisDelta).coerceAtLeast(0L),
+            gestureEasyCount = (existing.gestureEasyCount + gestureEasyDelta).coerceAtLeast(0),
+            gestureNotebookCount = (existing.gestureNotebookCount + gestureNotebookDelta).coerceAtLeast(0)
         )
         dailyStatsDao.update(updated)
+    }
+
+    private suspend fun invalidateForecastCacheInternal() {
+        forecastCacheDao.clearAll()
     }
 
     private fun currentLearningDate(now: Long = System.currentTimeMillis()): LocalDate {
@@ -729,4 +827,9 @@ class WordRepository(private val database: AppDatabase) {
         private const val DAY_REFRESH_HOUR = 4
         private val DATE_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE
     }
+}
+
+enum class AddToNewWordsSource {
+    BUTTON,
+    GESTURE
 }

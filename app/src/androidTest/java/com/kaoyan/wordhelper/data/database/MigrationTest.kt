@@ -16,7 +16,7 @@ import org.junit.runner.RunWith
 class MigrationTest {
 
     @Test
-    fun migrate1To7_preservesProgressData() {
+    fun migrate1To8_preservesProgressData() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.deleteDatabase(TEST_DB)
         createVersion1Database(context)
@@ -28,7 +28,8 @@ class MigrationTest {
                 AppDatabase.MIGRATION_3_4,
                 AppDatabase.MIGRATION_4_5,
                 AppDatabase.MIGRATION_5_6,
-                AppDatabase.MIGRATION_6_7
+                AppDatabase.MIGRATION_6_7,
+                AppDatabase.MIGRATION_7_8
             )
             .build()
 
@@ -61,6 +62,13 @@ class MigrationTest {
         }
 
         migratedDb.query(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tb_forecast_cache'"
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(1, cursor.getInt(0))
+        }
+
+        migratedDb.query(
             """
             SELECT repetitions, interval_days, review_count, spell_correct_count, spell_wrong_count
             FROM tb_progress WHERE id = 1
@@ -72,6 +80,45 @@ class MigrationTest {
             assertEquals(0, cursor.getInt(2))
             assertEquals(0, cursor.getInt(3))
             assertEquals(0, cursor.getInt(4))
+        }
+
+        migratedDb.query(
+            """
+            SELECT marked_easy_count, last_easy_time
+            FROM tb_progress WHERE id = 1
+            """.trimIndent()
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(0, cursor.getInt(0))
+            assertEquals(0L, cursor.getLong(1))
+        }
+
+        migratedDb.query(
+            """
+            SELECT gesture_easy_count, gesture_notebook_count
+            FROM tb_daily_stats
+            WHERE date = '2026-02-15'
+            LIMIT 1
+            """.trimIndent()
+        ).use { cursor ->
+            // daily stats row may not exist in seeded v1 db; validate schema by querying pragma instead.
+            if (cursor.moveToFirst()) {
+                assertEquals(0, cursor.getInt(0))
+                assertEquals(0, cursor.getInt(1))
+            }
+        }
+
+        migratedDb.query("PRAGMA table_info('tb_daily_stats')").use { cursor ->
+            var hasGestureEasy = false
+            var hasGestureNotebook = false
+            while (cursor.moveToNext()) {
+                when (cursor.getString(1)) {
+                    "gesture_easy_count" -> hasGestureEasy = true
+                    "gesture_notebook_count" -> hasGestureNotebook = true
+                }
+            }
+            assertTrue(hasGestureEasy)
+            assertTrue(hasGestureNotebook)
         }
 
         migratedDb.query("SELECT word, word_key, phonetic FROM tb_word WHERE id = 1").use { cursor ->

@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.kaoyan.wordhelper.data.dao.BookDao
 import com.kaoyan.wordhelper.data.dao.DailyStatsDao
 import com.kaoyan.wordhelper.data.dao.EarlyReviewDao
+import com.kaoyan.wordhelper.data.dao.ForecastCacheDao
 import com.kaoyan.wordhelper.data.dao.NewWordRefDao
 import com.kaoyan.wordhelper.data.dao.ProgressDao
 import com.kaoyan.wordhelper.data.dao.StudyLogDao
@@ -20,6 +21,7 @@ import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.entity.BookWordContent
 import com.kaoyan.wordhelper.data.entity.DailyStats
 import com.kaoyan.wordhelper.data.entity.EarlyReviewRef
+import com.kaoyan.wordhelper.data.entity.ForecastCache
 import com.kaoyan.wordhelper.data.entity.NewWordRef
 import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.data.entity.StudyLog
@@ -40,9 +42,10 @@ import kotlinx.coroutines.launch
         StudyLog::class,
         DailyStats::class,
         EarlyReviewRef::class,
-        AICache::class
+        AICache::class,
+        ForecastCache::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -55,6 +58,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun dailyStatsDao(): DailyStatsDao
     abstract fun earlyReviewDao(): EarlyReviewDao
     abstract fun aiCacheDao(): AICacheDao
+    abstract fun forecastCacheDao(): ForecastCacheDao
 
     companion object {
         @Volatile
@@ -78,7 +82,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_3_4,
                     MIGRATION_4_5,
                     MIGRATION_5_6,
-                    MIGRATION_6_7
+                    MIGRATION_6_7,
+                    MIGRATION_7_8
                 )
                 .build()
         }
@@ -411,6 +416,33 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_tb_ai_cache_query_content_type ON tb_ai_cache(query_content, type)"
+                )
+            }
+        }
+
+        @VisibleForTesting
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tb_progress ADD COLUMN marked_easy_count INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE tb_progress ADD COLUMN last_easy_time INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_tb_progress_next_review_time ON tb_progress(next_review_time)"
+                )
+
+                db.execSQL("ALTER TABLE tb_daily_stats ADD COLUMN gesture_easy_count INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "ALTER TABLE tb_daily_stats ADD COLUMN gesture_notebook_count INTEGER NOT NULL DEFAULT 0"
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS tb_forecast_cache (
+                        date INTEGER NOT NULL PRIMARY KEY,
+                        review_count INTEGER NOT NULL DEFAULT 0,
+                        new_word_quota INTEGER NOT NULL DEFAULT 0,
+                        is_calculated INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
                 )
             }
         }
