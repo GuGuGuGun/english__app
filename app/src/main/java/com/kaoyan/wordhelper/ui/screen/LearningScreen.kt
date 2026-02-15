@@ -117,21 +117,17 @@ fun LearningScreen(
     var showSheet by remember { mutableStateOf(false) }
     var showRemoveDialog by remember { mutableStateOf(false) }
     var showReviewDialog by remember { mutableStateOf(false) }
-    var showAiActionSheet by remember { mutableStateOf(false) }
+    var showAiAssistantPage by rememberSaveable { mutableStateOf(false) }
     var showAiGuideDialog by remember { mutableStateOf(false) }
-    var showMemoryAidPage by rememberSaveable { mutableStateOf(false) }
     var isCardFlipped by remember { mutableStateOf(false) }
     var lastRating by remember { mutableStateOf<StudyRating?>(null) }
     var learningMode by rememberSaveable { mutableStateOf(initialMode) }
 
     LaunchedEffect(currentWord?.id) {
         showReviewDialog = false
-        showAiActionSheet = false
         showAiGuideDialog = false
+        showAiAssistantPage = false
         isCardFlipped = false
-        if (currentWord == null) {
-            showMemoryAidPage = false
-        }
     }
 
     LaunchedEffect(activeBook?.id) {
@@ -169,11 +165,11 @@ fun LearningScreen(
     fun openAiEntry() {
         if (isAnswering) return
         if (aiState.isAvailable) {
-            showAiActionSheet = true
+            showAiAssistantPage = true
             showAiGuideDialog = false
         } else {
             showAiGuideDialog = true
-            showAiActionSheet = false
+            showAiAssistantPage = false
         }
     }
 
@@ -232,35 +228,6 @@ fun LearningScreen(
         )
     }
 
-    if (showAiActionSheet) {
-        val aiSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { showAiActionSheet = false },
-            sheetState = aiSheetState
-        ) {
-            LearningAiActionSheetContent(
-                isAvailable = aiState.isAvailable,
-                showExampleAction = isCardFlipped,
-                showMemoryAidSuggestion = memoryAidSuggestionWordId == currentWord?.id,
-                hasExampleContent = aiState.activeType == AIContentType.EXAMPLE && aiState.content.isNotBlank(),
-                hasMemoryContent = aiState.activeType == AIContentType.MEMORY_AID && aiState.content.isNotBlank(),
-                isLoading = aiState.isLoading,
-                onGenerateExample = {
-                    viewModel.requestAiExample(forceRefresh = false)
-                    showAiActionSheet = false
-                },
-                onRegenerateExample = {
-                    viewModel.requestAiExample(forceRefresh = true)
-                    showAiActionSheet = false
-                },
-                onOpenMemoryAidPage = {
-                    showMemoryAidPage = true
-                    showAiActionSheet = false
-                }
-            )
-        }
-    }
-
     val nextReviewTime = currentProgress?.nextReviewTime ?: 0L
     val reviewTag = DateUtils.reviewTag(nextReviewTime)
     val reviewDescription = DateUtils.reviewDescription(nextReviewTime)
@@ -305,12 +272,15 @@ fun LearningScreen(
         )
     }
 
-    if (showMemoryAidPage && currentWord != null) {
-        MemoryAidPage(
+    if (showAiAssistantPage && currentWord != null && learningMode == LearningMode.RECOGNITION) {
+        RecognitionAiAssistantPage(
             word = currentWord!!,
             aiState = aiState,
-            onBack = { showMemoryAidPage = false },
-            onGenerate = { forceRefresh -> viewModel.requestAiMemoryAid(forceRefresh = forceRefresh) }
+            showMemoryAidSuggestion = memoryAidSuggestionWordId == currentWord!!.id,
+            canGenerateExample = isCardFlipped,
+            onBack = { showAiAssistantPage = false },
+            onGenerateExample = { forceRefresh -> viewModel.requestAiExample(forceRefresh) },
+            onGenerateMemoryAid = { forceRefresh -> viewModel.requestAiMemoryAid(forceRefresh) }
         )
         return
     }
@@ -425,12 +395,6 @@ fun LearningScreen(
                                 )
                             }
                         }
-                        LearningAiResultPanel(
-                            aiState = aiState,
-                            showMemoryAidSuggestion = memoryAidSuggestionWordId == currentWord!!.id,
-                            onRetryExample = { viewModel.requestAiExample(forceRefresh = true) },
-                            onOpenAiEntry = ::openAiEntry
-                        )
                         RecognitionActionPanel(
                             isAnswering = isAnswering,
                             isNewWordsBook = isNewWordsBook,
@@ -586,6 +550,232 @@ private fun RecognitionHintBanner(modifier: Modifier = Modifier) {
 }
 
 @Composable
+private fun RecognitionAiAssistantPage(
+    word: Word,
+    aiState: LearningAiState,
+    showMemoryAidSuggestion: Boolean,
+    canGenerateExample: Boolean,
+    onBack: () -> Unit,
+    onGenerateExample: (Boolean) -> Unit,
+    onGenerateMemoryAid: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var exampleContent by remember(word.id) { mutableStateOf("") }
+    var memoryAidContent by remember(word.id) { mutableStateOf("") }
+    val scrollState = rememberScrollState()
+
+    LaunchedEffect(aiState.activeType, aiState.content) {
+        when (aiState.activeType) {
+            AIContentType.EXAMPLE -> if (aiState.content.isNotBlank()) exampleContent = aiState.content
+            AIContentType.MEMORY_AID -> if (aiState.content.isNotBlank()) memoryAidContent = aiState.content
+            AIContentType.SENTENCE, null -> Unit
+        }
+    }
+
+    val isExampleLoading = aiState.activeType == AIContentType.EXAMPLE && aiState.isLoading
+    val isMemoryAidLoading = aiState.activeType == AIContentType.MEMORY_AID && aiState.isLoading
+    val exampleError = if (aiState.activeType == AIContentType.EXAMPLE) aiState.error else null
+    val memoryAidError = if (aiState.activeType == AIContentType.MEMORY_AID) aiState.error else null
+    val hasExampleContent = exampleContent.isNotBlank()
+    val hasMemoryAidContent = memoryAidContent.isNotBlank()
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .testTag("learning_ai_page"),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack, modifier = Modifier.testTag("learning_ai_page_back")) {
+                Text(text = "返回认词")
+            }
+            Text(
+                text = "AI 学习助手",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.size(8.dp))
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "当前单词：${word.word}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "例句和助记会在本页展示，生成内容仅供学习参考。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (showMemoryAidSuggestion) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = AlertRed.copy(alpha = 0.08f)
+                ) {
+                    Text(
+                        text = "刚才答错了，建议优先生成助记技巧。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AlertRed,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                    )
+                }
+            }
+
+            if (!aiState.isAvailable) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
+                ) {
+                    Text(
+                        text = "AI 未启用或未配置，请先前往“我的 - AI 实验室”完成配置。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .padding(12.dp)
+                            .testTag("learning_ai_page_unavailable")
+                    )
+                }
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "例句生成",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (!canGenerateExample) {
+                        Text(
+                            text = "请先翻卡查看释义后再生成例句。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (isExampleLoading) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.testTag("learning_ai_page_example_loading")
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text(text = "正在生成例句...", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    if (!exampleError.isNullOrBlank()) {
+                        Text(
+                            text = exampleError,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AlertRed,
+                            modifier = Modifier.testTag("learning_ai_page_example_error")
+                        )
+                    }
+                    if (hasExampleContent) {
+                        AIContentResultCard(
+                            title = "AI 生成例句",
+                            content = exampleContent,
+                            modifier = Modifier.testTag("learning_ai_page_example_content")
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { onGenerateExample(hasExampleContent) },
+                        enabled = aiState.isAvailable && !aiState.isLoading && canGenerateExample,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("learning_ai_page_example_generate")
+                    ) {
+                        Text(text = if (hasExampleContent) "重新生成例句" else "生成例句")
+                    }
+                }
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "助记技巧",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (isMemoryAidLoading) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.testTag("learning_ai_page_memory_loading")
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text(text = "正在生成助记...", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    if (!memoryAidError.isNullOrBlank()) {
+                        Text(
+                            text = memoryAidError,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AlertRed,
+                            modifier = Modifier.testTag("learning_ai_page_memory_error")
+                        )
+                    }
+                    if (hasMemoryAidContent) {
+                        AIContentResultCard(
+                            title = "AI 助记技巧",
+                            content = memoryAidContent,
+                            modifier = Modifier.testTag("learning_ai_page_memory_content")
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { onGenerateMemoryAid(hasMemoryAidContent) },
+                        enabled = aiState.isAvailable && !aiState.isLoading,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("learning_ai_page_memory_generate")
+                    ) {
+                        Text(text = if (hasMemoryAidContent) "重新生成助记" else "生成助记")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun LearningAiActionSheetContent(
     isAvailable: Boolean,
     showExampleAction: Boolean,
@@ -595,7 +785,8 @@ fun LearningAiActionSheetContent(
     isLoading: Boolean,
     onGenerateExample: () -> Unit,
     onRegenerateExample: () -> Unit,
-    onOpenMemoryAidPage: () -> Unit,
+    onGenerateMemoryAid: () -> Unit,
+    onRegenerateMemoryAid: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -634,16 +825,17 @@ fun LearningAiActionSheetContent(
         }
 
         OutlinedButton(
-            onClick = onOpenMemoryAidPage,
+            onClick = { if (hasMemoryContent) onRegenerateMemoryAid() else onGenerateMemoryAid() },
             enabled = !isLoading,
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("learning_ai_action_memory")
         ) {
             val text = when {
-                showMemoryAidSuggestion -> "进入助记页面（推荐）"
-                hasMemoryContent -> "进入助记页面（已生成）"
-                else -> "进入助记页面"
+                showMemoryAidSuggestion && hasMemoryContent -> "重新生成助记（推荐）"
+                showMemoryAidSuggestion -> "生成助记（推荐）"
+                hasMemoryContent -> "重新生成助记"
+                else -> "生成助记"
             }
             Text(text = text)
         }
@@ -655,12 +847,14 @@ fun LearningAiResultPanel(
     aiState: LearningAiState,
     showMemoryAidSuggestion: Boolean,
     onRetryExample: () -> Unit,
+    onRetryMemoryAid: () -> Unit,
     onOpenAiEntry: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isExampleContext = aiState.activeType == AIContentType.EXAMPLE
+    val isMemoryAidContext = aiState.activeType == AIContentType.MEMORY_AID
     val shouldShow = showMemoryAidSuggestion ||
-        (isExampleContext && (
+        ((isExampleContext || isMemoryAidContext) && (
             aiState.isLoading ||
                 aiState.content.isNotBlank() ||
                 !aiState.error.isNullOrBlank()
@@ -669,8 +863,9 @@ fun LearningAiResultPanel(
 
     val loadingText = when (aiState.activeType) {
         AIContentType.EXAMPLE -> "正在生成例句..."
+        AIContentType.MEMORY_AID -> "正在生成助记..."
         AIContentType.SENTENCE -> "正在生成内容..."
-        AIContentType.MEMORY_AID, null -> "正在请求 AI..."
+        null -> "正在请求 AI..."
     }
 
     Surface(
@@ -686,7 +881,7 @@ fun LearningAiResultPanel(
         ) {
             if (showMemoryAidSuggestion && aiState.activeType == null && aiState.content.isBlank()) {
                 Text(
-                    text = "刚才答错了，点击灯泡进入助记页面获取 AI 助记。",
+                    text = "刚才答错了，点击灯泡生成 AI 助记。",
                     style = MaterialTheme.typography.bodySmall,
                     color = AlertRed,
                     modifier = Modifier.testTag("learning_ai_suggestion")
@@ -716,7 +911,8 @@ fun LearningAiResultPanel(
                         onClick = {
                             when (aiState.activeType) {
                                 AIContentType.EXAMPLE -> onRetryExample()
-                                AIContentType.MEMORY_AID, AIContentType.SENTENCE, null -> onOpenAiEntry()
+                                AIContentType.MEMORY_AID -> onRetryMemoryAid()
+                                AIContentType.SENTENCE -> onOpenAiEntry()
                             }
                         },
                         modifier = Modifier.testTag("learning_ai_retry")
@@ -729,145 +925,13 @@ fun LearningAiResultPanel(
             if (aiState.content.isNotBlank() && aiState.activeType != null) {
                 val title = when (aiState.activeType) {
                     AIContentType.EXAMPLE -> "AI 生成例句"
-                    AIContentType.MEMORY_AID,
+                    AIContentType.MEMORY_AID -> "AI 助记技巧"
                     AIContentType.SENTENCE -> "AI 内容"
                 }
-                if (aiState.activeType == AIContentType.EXAMPLE) {
+                if (aiState.activeType == AIContentType.EXAMPLE || aiState.activeType == AIContentType.MEMORY_AID) {
                     AIContentResultCard(title = title, content = aiState.content)
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun MemoryAidPage(
-    word: Word,
-    aiState: LearningAiState,
-    onBack: () -> Unit,
-    onGenerate: (forceRefresh: Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var requestedOnOpen by remember(word.id) { mutableStateOf(false) }
-
-    LaunchedEffect(word.id) {
-        if (!requestedOnOpen) {
-            onGenerate(false)
-            requestedOnOpen = true
-        }
-    }
-
-    val isMemoryAidLoading = aiState.activeType == AIContentType.MEMORY_AID && aiState.isLoading
-    val memoryAidError = if (aiState.activeType == AIContentType.MEMORY_AID) aiState.error else null
-    val memoryAidContent = if (aiState.activeType == AIContentType.MEMORY_AID) aiState.content else ""
-    val hasContent = memoryAidContent.isNotBlank()
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TextButton(onClick = onBack, modifier = Modifier.testTag("memory_page_back")) {
-                Text(text = "返回认词")
-            }
-            Text(
-                text = "助记页面",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(modifier = Modifier.size(8.dp))
-        }
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
-        ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "当前单词：${word.word}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = "生成结果仅供学习参考，请结合教材甄别。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        if (!aiState.isAvailable) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
-            ) {
-                Text(
-                    text = "AI 未启用或未配置，请先前往“我的 - AI 实验室”完成配置。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .padding(12.dp)
-                        .testTag("memory_page_unavailable")
-                )
-            }
-        }
-
-        if (isMemoryAidLoading) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("memory_page_loading"),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text(text = "正在生成助记...", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
-        if (!memoryAidError.isNullOrBlank()) {
-            Text(
-                text = memoryAidError,
-                style = MaterialTheme.typography.bodySmall,
-                color = AlertRed,
-                modifier = Modifier.testTag("memory_page_error")
-            )
-            OutlinedButton(
-                onClick = { onGenerate(true) },
-                enabled = aiState.isAvailable && !isMemoryAidLoading,
-                modifier = Modifier.testTag("memory_page_retry")
-            ) {
-                Text(text = "重试")
-            }
-        }
-
-        if (hasContent) {
-            AIContentResultCard(
-                title = "AI 助记技巧",
-                content = memoryAidContent,
-                modifier = Modifier.testTag("memory_page_content")
-            )
-        }
-
-        OutlinedButton(
-            onClick = { onGenerate(hasContent) },
-            enabled = aiState.isAvailable && !isMemoryAidLoading,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("memory_page_generate")
-        ) {
-            Text(text = if (hasContent) "重新生成助记" else "生成助记")
         }
     }
 }

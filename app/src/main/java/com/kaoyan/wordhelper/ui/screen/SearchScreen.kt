@@ -1,16 +1,19 @@
 package com.kaoyan.wordhelper.ui.screen
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
@@ -125,10 +128,14 @@ fun SearchSentenceAnalysisPanel(
             .fillMaxWidth()
             .testTag("search_sentence_panel")
     ) {
+        val panelScrollState = rememberScrollState()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .heightIn(max = 420.dp)
+                .verticalScroll(panelScrollState)
+                .padding(16.dp)
+                .testTag("search_sentence_panel_scroll"),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(text = "句子解析模式", style = MaterialTheme.typography.titleMedium)
