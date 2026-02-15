@@ -77,7 +77,7 @@ gradle :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArgume
 
 入口：`我的 -> AI 实验室`
 
-- `Base URL`：填写服务根地址（例如 `https://yunwu.ai/v1`），不要填写到 `chat/completions`。
+- `Base URL`：填写服务根地址（例如 `https://openai.ai/v1`），不要填写到 `chat/completions`。
 - `模型名称`：填写服务商实际可用模型 ID（例如 `gpt-5.2-chat-latest`）。
 - `API Key`：仅在本地加密存储，不上传到项目仓库。
 - 可通过“测试连接”验证配置是否生效。
