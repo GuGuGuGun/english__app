@@ -26,7 +26,7 @@
 
 | 项目 | 要求 |
 | --- | --- |
-| JDK | 17 或 21（推荐 21） |
+| JDK | 17 或 21（推荐 17） |
 | Android SDK | Compile SDK 34 / Target SDK 34 / Min SDK 26 |
 | 构建工具 | Gradle（当前仓库未内置 `gradlew`） |
 
