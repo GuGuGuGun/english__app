@@ -1570,35 +1570,33 @@ private fun WordCard(
                         }
                     }
                 }
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(6.dp)
-                        .clickable(enabled = starEnabled, onClick = onAiEntryClick)
-                        .testTag("learning_ai_bulb"),
-                    shape = RoundedCornerShape(999.dp),
-                    color = MaterialTheme.colorScheme.surface
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                if (aiAvailable) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(6.dp)
+                            .clickable(enabled = starEnabled, onClick = onAiEntryClick)
+                            .testTag("learning_ai_bulb"),
+                        shape = RoundedCornerShape(999.dp),
+                        color = MaterialTheme.colorScheme.surface
                     ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Lightbulb,
-                            contentDescription = null,
-                            tint = if (aiSuggested) AlertRed else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = when {
-                                aiSuggested -> "助记推荐"
-                                aiAvailable -> "AI"
-                                else -> "去配置"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Lightbulb,
+                                contentDescription = null,
+                                tint = if (aiSuggested) AlertRed else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = if (aiSuggested) "助记推荐" else "AI",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
                 }
             }

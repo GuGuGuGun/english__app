@@ -1,6 +1,7 @@
 ﻿package com.kaoyan.wordhelper
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -44,7 +45,7 @@ class M12AcceptanceTest {
     }
 
     @Test
-    fun learningAiBulbShowsGuideWhenNotConfigured() {
+    fun learningAiBulbHiddenWhenAiNotConfigured() {
         val app = composeTestRule.activity.application as KaoyanWordApp
         val originalConfig = runBlocking { app.aiConfigRepository.getConfig() }
         try {
@@ -58,8 +59,7 @@ class M12AcceptanceTest {
             }
             composeTestRule.activityRule.scenario.recreate()
             composeTestRule.waitForLearningWordCard()
-            composeTestRule.onNodeWithTag("learning_ai_bulb").assertIsDisplayed().performClick()
-            composeTestRule.onNodeWithTag("learning_ai_guide_confirm").assertIsDisplayed()
+            composeTestRule.onNodeWithTag("learning_ai_bulb").assertDoesNotExist()
         } finally {
             runBlocking {
                 app.aiConfigRepository.saveConfig(originalConfig)
