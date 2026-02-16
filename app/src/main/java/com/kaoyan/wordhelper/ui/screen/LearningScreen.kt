@@ -84,6 +84,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -1425,6 +1426,20 @@ private fun WordCard(
     modifier: Modifier = Modifier
 ) {
     var isFlipped by remember(word.id) { mutableStateOf(false) }
+    val normalizedWordLength = word.word.trim().length
+    val typography = MaterialTheme.typography
+    val frontWordStyle = when {
+        normalizedWordLength <= 12 -> typography.displayLarge
+        normalizedWordLength <= 16 -> typography.displayMedium
+        normalizedWordLength <= 20 -> typography.headlineLarge
+        normalizedWordLength <= 24 -> typography.headlineMedium
+        else -> typography.titleLarge
+    }
+    val backWordStyle = when {
+        normalizedWordLength <= 16 -> typography.titleLarge
+        normalizedWordLength <= 24 -> typography.titleMedium
+        else -> typography.titleSmall
+    }
     LaunchedEffect(word.id) {
         onFlipChanged(false)
     }
@@ -1502,7 +1517,12 @@ private fun WordCard(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)
                         ) {
-                            Text(text = word.word, style = MaterialTheme.typography.displayLarge)
+                            Text(
+                                text = word.word,
+                                style = frontWordStyle,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                             if (word.phonetic.isNotBlank()) {
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
@@ -1532,8 +1552,10 @@ private fun WordCard(
                         ) {
                             Text(
                                 text = word.word,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.SemiBold
+                                style = backWordStyle,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             if (word.phonetic.isNotBlank()) {
                                 Text(
