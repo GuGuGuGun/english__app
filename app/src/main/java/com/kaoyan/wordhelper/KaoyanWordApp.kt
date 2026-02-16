@@ -10,6 +10,7 @@ import com.kaoyan.wordhelper.data.repository.WordRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class KaoyanWordApp : Application() {
@@ -42,6 +43,10 @@ class KaoyanWordApp : Application() {
     override fun onCreate() {
         super.onCreate()
         appScope.launch {
+            val algorithmV4Enabled = settingsRepository.settingsFlow.first().algorithmV4Enabled
+            if (algorithmV4Enabled) {
+                repository.repairMasteredStatusForV4()
+            }
             repository.ensurePresetBooks()
         }
     }

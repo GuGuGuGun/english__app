@@ -140,9 +140,11 @@ fun ProfileScreen(
                     newWordsLimit = settings.newWordsLimit,
                     fontScale = settings.fontScale,
                     darkMode = settings.darkMode,
+                    algorithmV4Enabled = settings.algorithmV4Enabled,
                     onNewWordsLimitChange = viewModel::updateNewWordsLimit,
                     onFontScaleChange = viewModel::updateFontScale,
-                    onDarkModeChange = viewModel::updateDarkMode
+                    onDarkModeChange = viewModel::updateDarkMode,
+                    onAlgorithmV4EnabledChange = viewModel::updateAlgorithmV4Enabled
                 )
             }
             item {
@@ -274,9 +276,11 @@ private fun SettingsCard(
     newWordsLimit: Int,
     fontScale: Float,
     darkMode: DarkMode,
+    algorithmV4Enabled: Boolean,
     onNewWordsLimitChange: (Int) -> Unit,
     onFontScaleChange: (Float) -> Unit,
-    onDarkModeChange: (DarkMode) -> Unit
+    onDarkModeChange: (DarkMode) -> Unit,
+    onAlgorithmV4EnabledChange: (Boolean) -> Unit
 ) {
     var dailyNewWordsInput by remember(newWordsLimit) { mutableStateOf(newWordsLimit.toString()) }
     val parsedDailyNewWords = dailyNewWordsInput.toIntOrNull()
@@ -330,6 +334,14 @@ private fun SettingsCard(
                 optionTags = listOf("settings_dark_follow", "settings_dark_light", "settings_dark_dark"),
                 selected = darkMode,
                 onSelect = onDarkModeChange
+            )
+            SettingRow(
+                title = "算法版本",
+                options = listOf(false, true),
+                optionLabels = listOf("V3 稳定", "V4 验证"),
+                optionTags = listOf("settings_algo_v3", "settings_algo_v4"),
+                selected = algorithmV4Enabled,
+                onSelect = onAlgorithmV4EnabledChange
             )
         }
     }

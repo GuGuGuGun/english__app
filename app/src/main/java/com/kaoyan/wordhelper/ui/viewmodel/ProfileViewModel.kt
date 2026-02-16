@@ -104,6 +104,15 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun updateAlgorithmV4Enabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateAlgorithmV4Enabled(enabled)
+            if (enabled) {
+                repository.repairMasteredStatusForV4()
+            }
+        }
+    }
+
     fun exportDatabase(uri: Uri?) {
         if (uri == null) return
         viewModelScope.launch {

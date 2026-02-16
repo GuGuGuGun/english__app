@@ -41,7 +41,7 @@ sdk.dir=E:\\android_sdk
 2. 设置 JDK（PowerShell 示例）：
 
 ```powershell
-$env:JAVA_HOME = "E:\\java_21"
+$env:JAVA_HOME = "E:\\java_17"
 $env:Path = "$env:JAVA_HOME\\bin;" + $env:Path
 ```
 
@@ -97,6 +97,13 @@ gradle/             # 版本目录与构建配置
 
 ## 更新日志
 
+### 2026-02-16
+- 新增：学习设置增加“算法版本”开关（V3 稳定 / V4 验证）。
+- 新增：即时重试队列插入策略参数化（Legacy/V4），支持可控随机源与单元测试覆盖。
+- 优化：认词模式接入 V4 隐性评分（响应时长 > 6 秒自动降级）。
+- 优化：拼写模式在 V4 下改为“编辑距离主判定（0/1/2/>2）+ 提示/重试次级惩罚”。
+- 优化：V4 掌握判定升级为 30天 + 4次 + EF>=2.3，并在启用 V4 时自动修正历史 MASTERED 状态。
+- 测试：新增 ImmediateRetryQueuePlannerTest、SpellingEvaluatorTest、Sm2SchedulerTest，并更新 SpellingEvaluatorInstrumentedTest。
 ### 2026-02-15
 - 优化：学习页手势引导“`不再提示`”选项，`知道了`仅关闭本次，`不再提示`会持久关闭。
 - 新增：未来 7 天预测来源展示（`缓存命中/实时计算 + 耗时`）、高压预警与可访问性语义增强。
@@ -127,4 +134,6 @@ gradle/             # 版本目录与构建配置
 - 核心学习能力可离线运行。
 - AI 功能需要联网并由用户自备 API Key。
 - AI 生成内容仅供学习参考，请结合教材自行甄别。
+
+
 

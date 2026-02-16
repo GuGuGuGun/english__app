@@ -65,6 +65,7 @@ fun SpellingScreen(
     word: Word?,
     presentationKey: Int,
     isSubmitting: Boolean,
+    algorithmV4Enabled: Boolean = false,
     onSpellingResolved: (SpellingOutcome, Int, Long) -> Unit,
     onContinueAfterFailure: () -> Unit,
     aiAssistAvailable: Boolean = false,
@@ -112,7 +113,8 @@ fun SpellingScreen(
             input = answer,
             correctWord = target,
             hintUsed = usedHint,
-            attemptCount = currentAttempt
+            attemptCount = currentAttempt,
+            algorithmV4Enabled = algorithmV4Enabled
         )
         if (outcome != SpellingOutcome.FAILED) {
             status = SpellingStatus.Correct

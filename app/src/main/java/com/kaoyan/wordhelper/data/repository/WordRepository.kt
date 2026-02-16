@@ -302,10 +302,35 @@ class WordRepository(private val database: AppDatabase) {
 
     suspend fun getProgressByBook(bookId: Long): List<Progress> = progressDao.getProgressByBook(bookId)
 
-    suspend fun applyStudyResult(wordId: Long, bookId: Long, rating: StudyRating) {
+    suspend fun repairMasteredStatusForV4(): Int {
+        return database.withTransaction {
+            val downgraded = progressDao.downgradeInvalidMasteredStatus(
+                masteredStatus = Progress.STATUS_MASTERED,
+                learningStatus = Progress.STATUS_LEARNING,
+                minIntervalDays = MASTERED_INTERVAL_DAYS_V4,
+                minReviewCount = MASTERED_MIN_REVIEW_COUNT_V4,
+                minEaseFactor = MASTERED_MIN_EASE_V4
+            )
+            if (downgraded > 0) {
+                invalidateForecastCacheInternal()
+            }
+            downgraded
+        }
+    }
+
+    suspend fun applyStudyResult(
+        wordId: Long,
+        bookId: Long,
+        rating: StudyRating,
+        algorithmV4Enabled: Boolean = false
+    ) {
         database.withTransaction {
             val existing = progressDao.getGlobalProgress(wordId)
-            val schedule = Sm2Scheduler.schedule(existing, rating)
+            val schedule = Sm2Scheduler.schedule(
+                current = existing,
+                rating = rating,
+                algorithmV4Enabled = algorithmV4Enabled
+            )
             val previousReviewCount = existing?.reviewCount ?: 0
             val qualifiesAsCompleted = rating.quality >= StudyRating.HARD.quality
             val reviewCount = previousReviewCount + if (qualifiesAsCompleted) 1 else 0
@@ -352,11 +377,16 @@ class WordRepository(private val database: AppDatabase) {
         bookId: Long,
         outcome: SpellingOutcome,
         attemptCount: Int,
-        durationMillis: Long = 0L
+        durationMillis: Long = 0L,
+        algorithmV4Enabled: Boolean = false
     ) {
         database.withTransaction {
             val existing = progressDao.getGlobalProgress(wordId)
-            val schedule = Sm2Scheduler.scheduleSpelling(existing, outcome)
+            val schedule = Sm2Scheduler.scheduleSpelling(
+                current = existing,
+                outcome = outcome,
+                algorithmV4Enabled = algorithmV4Enabled
+            )
             val previousReviewCount = existing?.reviewCount ?: 0
             val qualifiesAsCompleted = outcome.quality >= StudyRating.HARD.quality
             val reviewCount = previousReviewCount + if (qualifiesAsCompleted) 1 else 0
@@ -825,6 +855,9 @@ class WordRepository(private val database: AppDatabase) {
     companion object {
         private const val DEFAULT_NEW_WORDS_LIMIT = 20
         private const val DAY_REFRESH_HOUR = 4
+        private const val MASTERED_INTERVAL_DAYS_V4 = 30
+        private const val MASTERED_MIN_REVIEW_COUNT_V4 = 4
+        private const val MASTERED_MIN_EASE_V4 = 2.3f
         private val DATE_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE
     }
 }

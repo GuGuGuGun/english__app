@@ -11,6 +11,8 @@ import com.kaoyan.wordhelper.data.entity.Word
 import com.kaoyan.wordhelper.data.model.SpellingOutcome
 import com.kaoyan.wordhelper.data.model.StudyRating
 import com.kaoyan.wordhelper.data.repository.AddToNewWordsSource
+import com.kaoyan.wordhelper.util.ImmediateRetryQueuePlanner
+import com.kaoyan.wordhelper.util.RetryRandomSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,7 +27,6 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.random.Random
 
 data class LearningAiState(
     val isEnabled: Boolean = false,
@@ -66,6 +67,8 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     private var queueBookId: Long? = null
     private var pendingFailedWordId: Long? = null
     private var answeredInSession = 0
+    private var currentWordPresentedAtMs = 0L
+    internal var retryQueueRandomSource: RetryRandomSource = RetryRandomSource.Default
     private val _isSubmitting = MutableStateFlow(false)
     val isSubmitting: StateFlow<Boolean> = _isSubmitting.asStateFlow()
     private val _message = MutableStateFlow<String?>(null)
@@ -131,6 +134,9 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     private val newWordsLimit: StateFlow<Int> = settingsRepository.settingsFlow
         .map { it.newWordsLimit }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DEFAULT_NEW_WORDS_LIMIT)
+    val algorithmV4Enabled: StateFlow<Boolean> = settingsRepository.settingsFlow
+        .map { it.algorithmV4Enabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     val reviewPressureReliefEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
         .map { it.reviewPressureReliefEnabled }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
@@ -214,14 +220,21 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     fun submitAnswer(rating: StudyRating) {
         val word = _currentWord.value ?: return
         val book = activeBook.value ?: return
+        val responseTimeMs = buildCurrentResponseTimeMs()
+        val effectiveRating = resolveRecognitionRating(rating, responseTimeMs)
         launchSubmit {
             pendingFailedWordId = null
             removeFromImmediateQueue(word.id)
             removeSessionSkippedWord(word.id)
             withContext(Dispatchers.IO) {
-                repository.applyStudyResult(word.id, book.id, rating)
+                repository.applyStudyResult(
+                    wordId = word.id,
+                    bookId = book.id,
+                    rating = effectiveRating,
+                    algorithmV4Enabled = algorithmV4Enabled.value
+                )
             }
-            if (rating == StudyRating.AGAIN) {
+            if (effectiveRating == StudyRating.AGAIN) {
                 enqueueImmediateRetry(word)
                 _memoryAidSuggestionWordId.value = word.id
             } else {
@@ -235,6 +248,8 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     fun submitAnswerAndRemoveFromNewWords(rating: StudyRating) {
         val word = _currentWord.value ?: return
         val book = activeBook.value ?: return
+        val responseTimeMs = buildCurrentResponseTimeMs()
+        val effectiveRating = resolveRecognitionRating(rating, responseTimeMs)
         launchSubmit {
             pendingFailedWordId = null
             _memoryAidSuggestionWordId.value = null
@@ -242,7 +257,12 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             removeSessionSkippedWord(word.id)
             withContext(Dispatchers.IO) {
                 repository.removeFromNewWords(word.id)
-                repository.applyStudyResult(word.id, book.id, rating)
+                repository.applyStudyResult(
+                    wordId = word.id,
+                    bookId = book.id,
+                    rating = effectiveRating,
+                    algorithmV4Enabled = algorithmV4Enabled.value
+                )
             }
             markAnswered()
             loadQueueForBook(book, newWordsLimit.value)
@@ -272,7 +292,8 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                     bookId = book.id,
                     outcome = outcome,
                     attemptCount = attemptCount,
-                    durationMillis = durationMillis
+                    durationMillis = durationMillis,
+                    algorithmV4Enabled = algorithmV4Enabled.value
                 )
             }
             if (outcome == SpellingOutcome.FAILED) {
@@ -598,6 +619,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         }
         val nextWord = list.firstOrNull()
         _currentWord.value = nextWord
+        currentWordPresentedAtMs = if (nextWord != null) System.currentTimeMillis() else 0L
         if (oldWordId != nextWord?.id) {
             _cachedExampleContent.value = ""
             _cachedMemoryAidContent.value = ""
@@ -612,6 +634,25 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
 
     private fun markAnswered() {
         answeredInSession += 1
+    }
+
+    private fun buildCurrentResponseTimeMs(now: Long = System.currentTimeMillis()): Long {
+        val startAt = currentWordPresentedAtMs
+        if (startAt <= 0L) return 0L
+        return (now - startAt).coerceAtLeast(0L)
+    }
+
+    private fun resolveRecognitionRating(
+        rating: StudyRating,
+        responseTimeMs: Long
+    ): StudyRating {
+        if (!algorithmV4Enabled.value) return rating
+        if (responseTimeMs <= RESPONSE_TIME_DOWNGRADE_THRESHOLD_MS) return rating
+        return when (rating) {
+            StudyRating.GOOD -> StudyRating.HARD
+            StudyRating.HARD -> StudyRating.AGAIN
+            StudyRating.AGAIN -> StudyRating.AGAIN
+        }
     }
 
     private fun skipWordInSession(wordId: Long) {
@@ -676,15 +717,18 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         val merged = baseQueue
             .filterNot { it.id in immediateIds }
             .toMutableList()
+        val policy = if (algorithmV4Enabled.value) {
+            ImmediateRetryQueuePlanner.V4Policy
+        } else {
+            ImmediateRetryQueuePlanner.LegacyPolicy
+        }
 
         immediateRetryQueue.forEach { retryWord ->
-            val insertIndex = if (merged.size <= 5) {
-                merged.size
-            } else {
-                val maxIndex = merged.lastIndex
-                val minIndex = 2.coerceAtMost(maxIndex)
-                Random.nextInt(from = minIndex, until = maxIndex + 1)
-            }
+            val insertIndex = ImmediateRetryQueuePlanner.resolveInsertIndex(
+                queueSize = merged.size,
+                policy = policy,
+                randomSource = retryQueueRandomSource
+            )
             merged.add(insertIndex, retryWord)
         }
         return merged
@@ -692,5 +736,6 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
 
     companion object {
         private const val DEFAULT_NEW_WORDS_LIMIT = 20
+        private const val RESPONSE_TIME_DOWNGRADE_THRESHOLD_MS = 6_000L
     }
 }

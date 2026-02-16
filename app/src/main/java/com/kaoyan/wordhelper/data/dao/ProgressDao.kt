@@ -64,6 +64,26 @@ interface ProgressDao {
     @Query("UPDATE tb_progress SET next_review_time = :time WHERE id = :id")
     suspend fun updateNextReviewTime(id: Long, time: Long)
 
+    @Query(
+        """
+        UPDATE tb_progress
+        SET status = :learningStatus
+        WHERE status = :masteredStatus
+          AND (
+            interval_days < :minIntervalDays
+            OR review_count < :minReviewCount
+            OR ease_factor < :minEaseFactor
+          )
+        """
+    )
+    suspend fun downgradeInvalidMasteredStatus(
+        masteredStatus: Int,
+        learningStatus: Int,
+        minIntervalDays: Int,
+        minReviewCount: Int,
+        minEaseFactor: Float
+    ): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(progress: Progress): Long
 

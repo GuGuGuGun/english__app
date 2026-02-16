@@ -10,46 +10,62 @@ import org.junit.runner.RunWith
 class SpellingEvaluatorInstrumentedTest {
 
     @Test
-    fun perfectWithoutHintMapsToPerfect() {
+    fun v4_perfectWithoutHint_mapsToPerfect() {
         val outcome = SpellingEvaluator.evaluate(
             input = "abandon",
             correctWord = "abandon",
             hintUsed = false,
-            attemptCount = 1
+            attemptCount = 1,
+            algorithmV4Enabled = true
         )
         assertEquals(SpellingOutcome.PERFECT, outcome)
     }
 
     @Test
-    fun hintedCorrectMapsToHinted() {
+    fun v4_oneTypo_mapsToHinted() {
         val outcome = SpellingEvaluator.evaluate(
-            input = "abandon",
+            input = "abndon",
             correctWord = "abandon",
-            hintUsed = true,
-            attemptCount = 1
+            hintUsed = false,
+            attemptCount = 1,
+            algorithmV4Enabled = true
         )
         assertEquals(SpellingOutcome.HINTED, outcome)
     }
 
     @Test
-    fun retrySuccessMapsToRetrySuccess() {
+    fun v4_twoTypos_mapsToRetrySuccess() {
         val outcome = SpellingEvaluator.evaluate(
-            input = "abandon",
+            input = "abndn",
             correctWord = "abandon",
             hintUsed = false,
-            attemptCount = 2
+            attemptCount = 1,
+            algorithmV4Enabled = true
         )
         assertEquals(SpellingOutcome.RETRY_SUCCESS, outcome)
     }
 
     @Test
-    fun wrongInputMapsToFailed() {
+    fun v4_largeDistance_mapsToFailed() {
         val outcome = SpellingEvaluator.evaluate(
-            input = "abandonn",
+            input = "abc",
             correctWord = "abandon",
             hintUsed = false,
-            attemptCount = 3
+            attemptCount = 1,
+            algorithmV4Enabled = true
         )
         assertEquals(SpellingOutcome.FAILED, outcome)
+    }
+
+    @Test
+    fun v4_hintAndRetry_penalizesToRetrySuccess() {
+        val outcome = SpellingEvaluator.evaluate(
+            input = "abandon",
+            correctWord = "abandon",
+            hintUsed = true,
+            attemptCount = 2,
+            algorithmV4Enabled = true
+        )
+        assertEquals(SpellingOutcome.RETRY_SUCCESS, outcome)
     }
 }

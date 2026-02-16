@@ -128,6 +128,7 @@ fun LearningScreen(
     val dueReviewCount by viewModel.dueReviewCount.collectAsStateWithLifecycle()
     val canRelieveReviewPressure by viewModel.canRelieveReviewPressure.collectAsStateWithLifecycle()
     val reviewPressureDailyCap by viewModel.reviewPressureDailyCap.collectAsStateWithLifecycle()
+    val algorithmV4Enabled by viewModel.algorithmV4Enabled.collectAsStateWithLifecycle()
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
     val cachedExampleContent by viewModel.cachedExampleContent.collectAsStateWithLifecycle()
     val cachedMemoryAidContent by viewModel.cachedMemoryAidContent.collectAsStateWithLifecycle()
@@ -513,6 +514,7 @@ fun LearningScreen(
                                 word = currentWord,
                                 presentationKey = currentIndex,
                                 isSubmitting = isAnswering,
+                                algorithmV4Enabled = algorithmV4Enabled,
                                 onSpellingResolved = viewModel::submitSpellingOutcome,
                                 onContinueAfterFailure = viewModel::continueAfterSpellingFailure,
                                 aiAssistAvailable = aiState.isAvailable,
