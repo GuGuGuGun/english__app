@@ -416,6 +416,30 @@ fun AILabScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "新词打乱记忆", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = if (uiState.newWordsShuffleEnabled) {
+                                        "已开启：新词会按随机顺序穿插学习"
+                                    } else {
+                                        "已关闭：新词按原始顺序加入学习队列"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.newWordsShuffleEnabled,
+                                onCheckedChange = viewModel::updateNewWordsShuffleEnabled,
+                                modifier = Modifier.testTag("lab_new_words_shuffle_switch")
+                            )
+                        }
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                         Text(
                             text = "算法说明书",
                             style = MaterialTheme.typography.titleSmall,

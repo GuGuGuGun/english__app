@@ -3,5 +3,6 @@ package com.kaoyan.wordhelper.data.model
 enum class AIContentType {
     EXAMPLE,
     MEMORY_AID,
-    SENTENCE
+    SENTENCE,
+    WORD_TRANSLATION
 }

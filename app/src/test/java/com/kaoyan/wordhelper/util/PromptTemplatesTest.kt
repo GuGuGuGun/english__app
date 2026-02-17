@@ -31,6 +31,14 @@ class PromptTemplatesTest {
     }
 
     @Test
+    fun buildWordTranslationPrompt_containsWordAndSections() {
+        val prompt = PromptTemplates.build(AIContentType.WORD_TRANSLATION, "abandon")
+        assertTrue(prompt.contains("abandon"))
+        assertTrue(prompt.contains("中文翻译"))
+        assertTrue(prompt.contains("词性"))
+    }
+
+    @Test
     fun systemInstruction_enforcesStrictOutput() {
         val instruction = PromptTemplates.systemInstruction(AIContentType.EXAMPLE)
         assertTrue(instruction.contains("严格"))

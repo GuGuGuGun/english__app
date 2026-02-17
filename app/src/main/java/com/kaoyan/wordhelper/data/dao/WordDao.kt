@@ -86,10 +86,18 @@ interface WordDao {
                ORDER BY bc.book_id ASC
                LIMIT 1
            )
-           WHERE w.word LIKE '%' || :query || '%'
-             AND (:bookId <= 0 OR c_current.id IS NOT NULL)
-           ORDER BY w.word ASC
-           LIMIT 50"""
+            WHERE (
+                   w.word LIKE '%' || :query || '%'
+                   OR (
+                       CASE
+                           WHEN :bookId > 0 THEN IFNULL(c_current.meaning, '')
+                           ELSE IFNULL(c_any.meaning, '')
+                       END
+                   ) LIKE '%' || :query || '%'
+                  )
+              AND (:bookId <= 0 OR c_current.id IS NOT NULL)
+            ORDER BY w.word ASC
+            LIMIT 50"""
     )
     suspend fun searchWords(query: String, bookId: Long = 0): List<Word>
 

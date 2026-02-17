@@ -146,6 +146,9 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     val pronunciationEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
         .map { it.pronunciationEnabled }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    private val shuffleNewWordsEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
+        .map { it.newWordsShuffleEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     val canRelieveReviewPressure: StateFlow<Boolean> = combine(
         activeBook,
         reviewPressureReliefEnabled,
@@ -161,10 +164,11 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     init {
         refreshAiAvailability()
         viewModelScope.launch {
-            combine(activeBook, newWordsLimit) { book, limit -> book to limit }
-                .collect { (book, limit) ->
+            combine(activeBook, newWordsLimit, shuffleNewWordsEnabled) { book, limit, shuffle ->
+                Triple(book, limit, shuffle)
+            }.collect { (book, limit, shuffle) ->
                     if (pendingFailedWordId != null) return@collect
-                    loadQueueForBook(book, limit)
+                    loadQueueForBook(book, limit, shuffle)
                 }
         }
         viewModelScope.launch {
@@ -172,7 +176,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 if (pendingFailedWordId != null) return@collect
                 val book = activeBook.value
                 if (book?.type == Book.TYPE_NEW_WORDS) {
-                    loadQueueForBook(book, newWordsLimit.value)
+                    loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
                 }
             }
         }
@@ -189,7 +193,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                     if (pendingFailedWordId != null) return@collect
                     val book = activeBook.value
                     if (book != null) {
-                        loadQueueForBook(book, newWordsLimit.value)
+                        loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
                     }
                 }
         }
@@ -244,7 +248,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 _memoryAidSuggestionWordId.value = null
                 markAnswered()
             }
-            loadQueueForBook(book, newWordsLimit.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
         }
     }
 
@@ -268,7 +272,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 )
             }
             markAnswered()
-            loadQueueForBook(book, newWordsLimit.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
         }
     }
 
@@ -304,7 +308,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             }
             pendingFailedWordId = null
             markAnswered()
-            loadQueueForBook(book, newWordsLimit.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
         }
     }
 
@@ -317,7 +321,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             enqueueImmediateRetry(currentWord)
             markAnswered()
-            loadQueueForBook(book, newWordsLimit.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
         }
     }
 
@@ -346,7 +350,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 actionLabel = "撤销",
                 undoToken = undoToken
             )
-            loadQueueForBook(book, newWordsLimit.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
         }
     }
 
@@ -366,7 +370,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             emitSwipeSnackbar(
                 message = if (inserted) "已加入生词本" else "已在生词本中"
             )
-            loadQueueForBook(book, newWordsLimit.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
         }
     }
 
@@ -383,9 +387,9 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             pendingTooEasyUndo.remove(undoToken)
             answeredInSession = (answeredInSession - 1).coerceAtLeast(0)
             val book = activeBook.value
-            if (book != null) {
-                loadQueueForBook(book, newWordsLimit.value)
-            }
+                if (book != null) {
+                    loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+                }
             emitSwipeSnackbar("已撤销“太简单”")
         }
     }
@@ -412,7 +416,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             pendingFailedWordId = null
             sessionSkippedWordIds.clear()
             answeredInSession = 0
-            loadQueueForBook(book, newWordsLimit.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
         }
     }
 
@@ -432,7 +436,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 "当前待复习数量未超过上限"
             }
             pendingFailedWordId = null
-            loadQueueForBook(book, newWordsLimit.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
         }
     }
 
@@ -579,7 +583,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         _message.value = null
     }
 
-    private suspend fun loadQueueForBook(book: Book?, newWordsLimit: Int) {
+    private suspend fun loadQueueForBook(book: Book?, newWordsLimit: Int, shuffleNewWords: Boolean) {
         if (book == null) {
             immediateRetryQueue.clear()
             sessionSkippedWordIds.clear()
@@ -602,7 +606,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         val (queue, dueCount) = withContext(Dispatchers.IO) {
             val dueCount = repository.getDueWords(book.id).size
             val effectiveNewWordLimit = repository.estimateRemainingNewWordsToday(book, newWordsLimit)
-            repository.getStudyQueue(book, effectiveNewWordLimit) to dueCount
+            repository.getStudyQueue(book, effectiveNewWordLimit, shuffleNewWords) to dueCount
         }
         _dueReviewCount.value = dueCount
         val mergedQueue = mergeWithImmediateRetryQueue(queue)

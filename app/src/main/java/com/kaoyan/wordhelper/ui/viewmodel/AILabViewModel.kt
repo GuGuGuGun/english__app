@@ -21,6 +21,7 @@ data class AILabUiState(
     val modelName: String = AIConfig.DEFAULT_MODEL_NAME,
     val apiKey: String = "",
     val algorithmV4Enabled: Boolean = false,
+    val newWordsShuffleEnabled: Boolean = false,
     val pronunciationEnabled: Boolean = false,
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
@@ -58,6 +59,7 @@ class AILabViewModel(application: Application) : AndroidViewModel(application) {
                 modelName = config.modelName,
                 apiKey = config.apiKey,
                 algorithmV4Enabled = settings.algorithmV4Enabled,
+                newWordsShuffleEnabled = settings.newWordsShuffleEnabled,
                 pronunciationEnabled = settings.pronunciationEnabled,
                 isLoading = false
             )
@@ -78,6 +80,13 @@ class AILabViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             settingsRepository.updatePronunciationEnabled(enabled)
             _uiState.update { it.copy(pronunciationEnabled = enabled) }
+        }
+    }
+
+    fun updateNewWordsShuffleEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateNewWordsShuffleEnabled(enabled)
+            _uiState.update { it.copy(newWordsShuffleEnabled = enabled) }
         }
     }
 

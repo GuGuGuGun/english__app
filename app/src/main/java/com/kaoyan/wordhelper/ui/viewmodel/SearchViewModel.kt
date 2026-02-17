@@ -57,7 +57,10 @@ data class SearchWordAiState(
     val isConfigured: Boolean = false,
     val isLoading: Boolean = false,
     val content: String = "",
-    val error: String? = null
+    val error: String? = null,
+    val translationLoading: Boolean = false,
+    val translationContent: String = "",
+    val translationError: String? = null
 ) {
     val isAvailable: Boolean
         get() = isEnabled && isConfigured
@@ -143,7 +146,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             wordId = null,
             isLoading = false,
             content = "",
-            error = null
+            error = null,
+            translationLoading = false,
+            translationContent = "",
+            translationError = null
         )
     }
 
@@ -195,6 +201,60 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         isLoading = false,
                         content = "",
                         error = throwable.message ?: "AI 助记生成失败"
+                    )
+                }
+            )
+        }
+    }
+
+    fun requestWordChineseTranslation(word: Word, forceRefresh: Boolean = false) {
+        viewModelScope.launch {
+            val config = aiConfigRepository.getConfig()
+            val enabled = config.enabled
+            val configured = config.isConfigured()
+            _wordAiState.value = _wordAiState.value.copy(
+                wordId = word.id,
+                isEnabled = enabled,
+                isConfigured = configured
+            )
+            if (!enabled || !configured) {
+                _wordAiState.value = _wordAiState.value.copy(
+                    wordId = word.id,
+                    translationLoading = false,
+                    translationContent = "",
+                    translationError = "请先在 AI 实验室启用并配置 API Key"
+                )
+                return@launch
+            }
+
+            _wordAiState.value = _wordAiState.value.copy(
+                wordId = word.id,
+                translationLoading = true,
+                translationError = null
+            )
+            val result = withContext(Dispatchers.IO) {
+                aiRepository.getAIContent(
+                    wordId = word.id,
+                    queryContent = word.word,
+                    type = AIContentType.WORD_TRANSLATION,
+                    forceRefresh = forceRefresh
+                )
+            }
+            result.fold(
+                onSuccess = { content ->
+                    _wordAiState.value = _wordAiState.value.copy(
+                        wordId = word.id,
+                        translationLoading = false,
+                        translationContent = content,
+                        translationError = null
+                    )
+                },
+                onFailure = { throwable ->
+                    _wordAiState.value = _wordAiState.value.copy(
+                        wordId = word.id,
+                        translationLoading = false,
+                        translationContent = "",
+                        translationError = throwable.message ?: "中文翻译生成失败"
                     )
                 }
             )

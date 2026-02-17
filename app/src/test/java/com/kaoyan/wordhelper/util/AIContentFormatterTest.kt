@@ -30,4 +30,12 @@ class AIContentFormatterTest {
         assertTrue(normalized.contains("## 语法成分标注"))
         assertTrue(normalized.contains("## 中文翻译"))
     }
+
+    @Test
+    fun normalizeWordTranslation_wrapsIntoFixedTemplate() {
+        val raw = "遗弃；放弃\nv."
+        val normalized = AIContentFormatter.normalize(AIContentType.WORD_TRANSLATION, raw)
+        assertTrue(normalized.contains("【中文翻译】"))
+        assertTrue(normalized.contains("【词性】"))
+    }
 }

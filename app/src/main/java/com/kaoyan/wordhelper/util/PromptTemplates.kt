@@ -16,6 +16,10 @@ object PromptTemplates {
             AIContentType.SENTENCE -> {
                 "你是英语长难句解析助手。必须严格输出“句子主干/语法成分标注/中文翻译”三段，不得增加其他标题。"
             }
+
+            AIContentType.WORD_TRANSLATION -> {
+                "你是考研英语词义助手。必须严格输出“中文翻译/词性”两段，不得添加额外说明。"
+            }
         }
     }
 
@@ -24,6 +28,7 @@ object PromptTemplates {
             AIContentType.EXAMPLE -> buildExamplePrompt(query)
             AIContentType.MEMORY_AID -> buildMemoryAidPrompt(query)
             AIContentType.SENTENCE -> buildSentencePrompt(query)
+            AIContentType.WORD_TRANSLATION -> buildWordTranslationPrompt(query)
         }
     }
 
@@ -74,6 +79,20 @@ object PromptTemplates {
             ## 中文翻译
             （给出自然、通顺的中文翻译）
             不得输出其他标题、前言或总结。
+        """.trimIndent()
+    }
+
+    private fun buildWordTranslationPrompt(word: String): String {
+        return """
+            请为单词 "$word" 给出常见中文释义，严格按以下格式输出：
+            【中文翻译】
+            <给出 1-3 个常见义项，使用“；”分隔>
+            【词性】
+            <常见词性缩写，如 n./v./adj./adv.；不确定时写“未标注”>
+
+            规则：
+            1. 只输出上述模板，不要添加解释。
+            2. 中文翻译尽量简洁，适合背词场景。
         """.trimIndent()
     }
 }

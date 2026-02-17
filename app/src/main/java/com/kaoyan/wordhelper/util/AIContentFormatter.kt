@@ -11,6 +11,7 @@ object AIContentFormatter {
             AIContentType.EXAMPLE -> normalizeExample(content)
             AIContentType.MEMORY_AID -> normalizeMemoryAid(content)
             AIContentType.SENTENCE -> normalizeSentence(content)
+            AIContentType.WORD_TRANSLATION -> normalizeWordTranslation(content)
         }
     }
 
@@ -88,6 +89,32 @@ object AIContentFormatter {
             $grammar
             ## 中文翻译
             $translation
+        """.trimIndent()
+    }
+
+    private fun normalizeWordTranslation(content: String): String {
+        if (content.contains("【中文翻译】") && content.contains("【词性】")) {
+            return content
+        }
+        val lines = collectCleanLines(content)
+        val translation = lines.firstOrNull { line -> line.any { it in '\u4e00'..'\u9fff' } }
+            ?: lines.firstOrNull()
+            ?: "（未提取到中文翻译，请重试）"
+        val partOfSpeech = lines.firstOrNull { line ->
+            val lower = line.lowercase()
+            lower.contains("n.") ||
+                lower.contains("v.") ||
+                lower.contains("adj.") ||
+                lower.contains("adv.") ||
+                lower.contains("prep.") ||
+                lower.contains("pron.") ||
+                lower.contains("词性")
+        } ?: "未标注"
+        return """
+            【中文翻译】
+            $translation
+            【词性】
+            $partOfSpeech
         """.trimIndent()
     }
 

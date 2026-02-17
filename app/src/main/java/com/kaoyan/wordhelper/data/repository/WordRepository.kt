@@ -432,7 +432,11 @@ class WordRepository(private val database: AppDatabase) {
         }
     }
 
-    suspend fun getStudyQueue(book: Book, newWordLimit: Int = DEFAULT_NEW_WORDS_LIMIT): List<Word> {
+    suspend fun getStudyQueue(
+        book: Book,
+        newWordLimit: Int = DEFAULT_NEW_WORDS_LIMIT,
+        shuffleNewWords: Boolean = false
+    ): List<Word> {
         val sourceWords = if (book.type == Book.TYPE_NEW_WORDS) {
             wordDao.getNewWordsList()
         } else {
@@ -478,8 +482,14 @@ class WordRepository(private val database: AppDatabase) {
             .filter { it.id !in progressIds && it.id !in excludedIds }
             .take(adjustedNewWordLimit)
 
+        val orderedNewWords = if (shuffleNewWords) {
+            newWords.shuffled()
+        } else {
+            newWords
+        }
+
         val reviewWords = dueWords + earlyReviewWords
-        return mixReviewAndNewWords(reviewWords, newWords)
+        return mixReviewAndNewWords(reviewWords, orderedNewWords)
     }
 
     fun getEarlyReviewCountFlow(bookId: Long): Flow<Int> = earlyReviewDao.getCountFlow(bookId)

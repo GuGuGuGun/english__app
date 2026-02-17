@@ -128,10 +128,18 @@ fun SearchScreen(viewModel: SearchViewModel = viewModel()) {
             },
             sheetState = sheetState
         ) {
+            LaunchedEffect(selectedItem.word.id, wordAiState.isAvailable) {
+                if (wordAiState.isAvailable) {
+                    viewModel.requestWordChineseTranslation(selectedItem.word, forceRefresh = false)
+                }
+            }
             SearchDetailSheet(
                 item = selectedItem,
                 wordAiState = wordAiState,
                 onAddToNewWords = { viewModel.toggleNewWord(selectedItem.word, selectedItem.isInNewWords) },
+                onGenerateTranslation = { forceRefresh ->
+                    viewModel.requestWordChineseTranslation(selectedItem.word, forceRefresh)
+                },
                 onGenerateAi = { forceRefresh -> viewModel.requestWordMemoryAid(selectedItem.word, forceRefresh) },
                 onPronounce = { playWordPronunciation(selectedItem.word.id, selectedItem.word.word) },
                 showPronounceButton = pronunciationEnabled,
@@ -452,6 +460,7 @@ private fun SearchDetailSheet(
     item: SearchWordItem,
     wordAiState: SearchWordAiState,
     onAddToNewWords: () -> Unit,
+    onGenerateTranslation: (Boolean) -> Unit,
     onGenerateAi: (Boolean) -> Unit,
     onPronounce: () -> Unit,
     showPronounceButton: Boolean,
@@ -460,7 +469,15 @@ private fun SearchDetailSheet(
     val currentAiState = if (wordAiState.wordId == item.word.id) {
         wordAiState
     } else {
-        wordAiState.copy(wordId = item.word.id, isLoading = false, content = "", error = null)
+        wordAiState.copy(
+            wordId = item.word.id,
+            isLoading = false,
+            content = "",
+            error = null,
+            translationLoading = false,
+            translationContent = "",
+            translationError = null
+        )
     }
 
     Column(
@@ -513,6 +530,75 @@ private fun SearchDetailSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+        Text(text = "AI 中文翻译", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+
+        when {
+            currentAiState.translationLoading -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text(text = "正在生成中文翻译...", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            !currentAiState.translationError.isNullOrBlank() -> {
+                Text(
+                    text = currentAiState.translationError ?: "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+                if (currentAiState.isAvailable) {
+                    OutlinedButton(onClick = { onGenerateTranslation(false) }) {
+                        Text(text = "重试")
+                    }
+                }
+            }
+
+            currentAiState.translationContent.isNotBlank() -> {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            AIGeneratedBadge()
+                        }
+                        Text(text = currentAiState.translationContent, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                OutlinedButton(onClick = { onGenerateTranslation(true) }) {
+                    Text(text = "重新生成翻译")
+                }
+            }
+
+            else -> {
+                val hint = if (currentAiState.isAvailable) {
+                    "自动生成当前单词的中文翻译与词性提示。"
+                } else {
+                    "请先在 AI 实验室启用并配置 API Key。"
+                }
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedButton(
+                    onClick = { onGenerateTranslation(false) },
+                    enabled = currentAiState.isAvailable
+                ) {
+                    Text(text = "生成中文翻译")
+                }
+            }
+        }
+
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
         Text(text = "AI 助记", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
 

@@ -990,7 +990,7 @@ private fun RecognitionAiAssistantPage(
         when (aiState.activeType) {
             AIContentType.EXAMPLE -> if (aiState.content.isNotBlank()) exampleContent = aiState.content
             AIContentType.MEMORY_AID -> if (aiState.content.isNotBlank()) memoryAidContent = aiState.content
-            AIContentType.SENTENCE, null -> Unit
+            AIContentType.SENTENCE, AIContentType.WORD_TRANSLATION, null -> Unit
         }
     }
 
@@ -1293,6 +1293,7 @@ fun LearningAiResultPanel(
         AIContentType.EXAMPLE -> "正在生成例句..."
         AIContentType.MEMORY_AID -> "正在生成助记..."
         AIContentType.SENTENCE -> "正在生成内容..."
+        AIContentType.WORD_TRANSLATION -> "正在生成翻译..."
         null -> "正在请求 AI..."
     }
 
@@ -1341,6 +1342,7 @@ fun LearningAiResultPanel(
                                 AIContentType.EXAMPLE -> onRetryExample()
                                 AIContentType.MEMORY_AID -> onRetryMemoryAid()
                                 AIContentType.SENTENCE -> onOpenAiEntry()
+                                AIContentType.WORD_TRANSLATION -> onOpenAiEntry()
                             }
                         },
                         modifier = Modifier.testTag("learning_ai_retry")
@@ -1355,6 +1357,7 @@ fun LearningAiResultPanel(
                     AIContentType.EXAMPLE -> "AI 生成例句"
                     AIContentType.MEMORY_AID -> "AI 助记技巧"
                     AIContentType.SENTENCE -> "AI 内容"
+                    AIContentType.WORD_TRANSLATION -> "AI 中文翻译"
                 }
                 if (aiState.activeType == AIContentType.EXAMPLE || aiState.activeType == AIContentType.MEMORY_AID) {
                     AIContentResultCard(title = title, content = aiState.content)
