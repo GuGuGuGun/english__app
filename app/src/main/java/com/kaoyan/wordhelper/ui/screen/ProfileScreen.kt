@@ -4,6 +4,12 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -27,6 +34,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
@@ -50,6 +59,7 @@ import com.kaoyan.wordhelper.ui.component.MemoryLineChart
 import com.kaoyan.wordhelper.ui.viewmodel.AiLabSummary
 import com.kaoyan.wordhelper.ui.viewmodel.ProfileViewModel
 import com.kaoyan.wordhelper.ui.viewmodel.ProfileStats
+import kotlinx.coroutines.delay
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -65,6 +75,11 @@ fun ProfileScreen(
     val aiLabSummary by viewModel.aiLabSummary.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var statsVisible by remember { mutableStateOf(false) }
+    var dataVisible by remember { mutableStateOf(false) }
+    var settingsVisible by remember { mutableStateOf(false) }
+    var aiVisible by remember { mutableStateOf(false) }
+    var aboutVisible by remember { mutableStateOf(false) }
 
     var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
     val exportFileName = remember {
@@ -92,6 +107,15 @@ fun ProfileScreen(
 
     LaunchedEffect(Unit) {
         viewModel.refreshAiSummary()
+        statsVisible = true
+        delay(45)
+        dataVisible = true
+        delay(45)
+        settingsVisible = true
+        delay(45)
+        aiVisible = true
+        delay(45)
+        aboutVisible = true
     }
 
     if (pendingRestoreUri != null) {
@@ -115,46 +139,91 @@ fun ProfileScreen(
         )
     }
 
+    val pageBrush = Brush.verticalGradient(
+        colors = listOf(
+            MaterialTheme.colorScheme.background,
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.05f),
+            MaterialTheme.colorScheme.background
+        )
+    )
+
     Scaffold(
-        topBar = { TopAppBar(title = { Text(text = "我的") }) }
+        topBar = {
+            TopAppBar(
+                title = { Text(text = "我的") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                )
+            )
+        }
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .background(pageBrush)
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 .testTag("profile_list"),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                StatsCard(stats = stats, onOpenStats = onOpenStats)
+                AnimatedVisibility(
+                    visible = statsVisible,
+                    enter = fadeIn(animationSpec = tween(220)) +
+                        slideInVertically(initialOffsetY = { it / 4 }, animationSpec = tween(300))
+                ) {
+                    StatsCard(stats = stats, onOpenStats = onOpenStats)
+                }
             }
             item {
-                DataManageCard(
-                    onExport = { exportLauncher.launch(exportFileName) },
-                    onImport = { importLauncher.launch(arrayOf("application/octet-stream", "application/*", "*/*")) }
-                )
+                AnimatedVisibility(
+                    visible = dataVisible,
+                    enter = fadeIn(animationSpec = tween(220)) +
+                        slideInVertically(initialOffsetY = { it / 4 }, animationSpec = tween(300))
+                ) {
+                    DataManageCard(
+                        onExport = { exportLauncher.launch(exportFileName) },
+                        onImport = { importLauncher.launch(arrayOf("application/octet-stream", "application/*", "*/*")) }
+                    )
+                }
             }
             item {
-                SettingsCard(
-                    newWordsLimit = settings.newWordsLimit,
-                    fontScale = settings.fontScale,
-                    darkMode = settings.darkMode,
-                    algorithmV4Enabled = settings.algorithmV4Enabled,
-                    onNewWordsLimitChange = viewModel::updateNewWordsLimit,
-                    onFontScaleChange = viewModel::updateFontScale,
-                    onDarkModeChange = viewModel::updateDarkMode,
-                    onAlgorithmV4EnabledChange = viewModel::updateAlgorithmV4Enabled
-                )
+                AnimatedVisibility(
+                    visible = settingsVisible,
+                    enter = fadeIn(animationSpec = tween(220)) +
+                        slideInVertically(initialOffsetY = { it / 4 }, animationSpec = tween(300))
+                ) {
+                    SettingsCard(
+                        newWordsLimit = settings.newWordsLimit,
+                        fontScale = settings.fontScale,
+                        darkMode = settings.darkMode,
+                        onNewWordsLimitChange = viewModel::updateNewWordsLimit,
+                        onFontScaleChange = viewModel::updateFontScale,
+                        onDarkModeChange = viewModel::updateDarkMode
+                    )
+                }
             }
             item {
-                AiLabEntryCard(
-                    summary = aiLabSummary,
-                    onOpenAiLab = onOpenAiLab
-                )
+                AnimatedVisibility(
+                    visible = aiVisible,
+                    enter = fadeIn(animationSpec = tween(220)) +
+                        slideInVertically(initialOffsetY = { it / 4 }, animationSpec = tween(300))
+                ) {
+                    LabEntryCard(
+                        summary = aiLabSummary,
+                        onOpenAiLab = onOpenAiLab
+                    )
+                }
             }
             item {
-                AboutCard()
+                AnimatedVisibility(
+                    visible = aboutVisible,
+                    enter = fadeIn(animationSpec = tween(220)) +
+                        slideInVertically(initialOffsetY = { it / 4 }, animationSpec = tween(300))
+                ) {
+                    AboutCard()
+                }
             }
         }
     }
@@ -165,7 +234,12 @@ private fun StatsCard(
     stats: ProfileStats,
     onOpenStats: () -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -252,7 +326,12 @@ private fun DataManageCard(
     onExport: () -> Unit,
     onImport: () -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -276,11 +355,9 @@ private fun SettingsCard(
     newWordsLimit: Int,
     fontScale: Float,
     darkMode: DarkMode,
-    algorithmV4Enabled: Boolean,
     onNewWordsLimitChange: (Int) -> Unit,
     onFontScaleChange: (Float) -> Unit,
-    onDarkModeChange: (DarkMode) -> Unit,
-    onAlgorithmV4EnabledChange: (Boolean) -> Unit
+    onDarkModeChange: (DarkMode) -> Unit
 ) {
     var dailyNewWordsInput by remember(newWordsLimit) { mutableStateOf(newWordsLimit.toString()) }
     val parsedDailyNewWords = dailyNewWordsInput.toIntOrNull()
@@ -288,7 +365,12 @@ private fun SettingsCard(
         parsedDailyNewWords in 1..500 &&
         parsedDailyNewWords != newWordsLimit
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -335,14 +417,6 @@ private fun SettingsCard(
                 selected = darkMode,
                 onSelect = onDarkModeChange
             )
-            SettingRow(
-                title = "算法版本",
-                options = listOf(false, true),
-                optionLabels = listOf("V3 稳定", "V4 验证"),
-                optionTags = listOf("settings_algo_v3", "settings_algo_v4"),
-                selected = algorithmV4Enabled,
-                onSelect = onAlgorithmV4EnabledChange
-            )
         }
     }
 }
@@ -374,18 +448,28 @@ private fun <T> SettingRow(
 }
 
 @Composable
-private fun AiLabEntryCard(
+private fun LabEntryCard(
     summary: AiLabSummary,
     onOpenAiLab: () -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(text = "AI 实验室", style = MaterialTheme.typography.titleLarge)
+            Text(text = "实验室", style = MaterialTheme.typography.titleLarge)
             Text(
-                text = summary.status,
+                text = "AI：${summary.status}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "包含 AI 实验室、发音实验室、算法实验室。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -393,7 +477,7 @@ private fun AiLabEntryCard(
                 onClick = onOpenAiLab,
                 modifier = Modifier.testTag("profile_open_ai_lab")
             ) {
-                Text(text = "进入设置")
+                Text(text = "进入实验室")
             }
         }
     }
@@ -401,7 +485,12 @@ private fun AiLabEntryCard(
 
 @Composable
 private fun AboutCard() {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)

@@ -5,6 +5,7 @@ import com.kaoyan.wordhelper.data.database.AppDatabase
 import com.kaoyan.wordhelper.data.repository.AIConfigRepository
 import com.kaoyan.wordhelper.data.repository.AIRepository
 import com.kaoyan.wordhelper.data.repository.ForecastRepository
+import com.kaoyan.wordhelper.data.repository.PronunciationRepository
 import com.kaoyan.wordhelper.data.repository.SettingsRepository
 import com.kaoyan.wordhelper.data.repository.WordRepository
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +39,10 @@ class KaoyanWordApp : Application() {
 
     val aiRepository: AIRepository by lazy {
         AIRepository(database, aiConfigRepository)
+    }
+
+    val pronunciationRepository: PronunciationRepository by lazy {
+        PronunciationRepository()
     }
 
     override fun onCreate() {

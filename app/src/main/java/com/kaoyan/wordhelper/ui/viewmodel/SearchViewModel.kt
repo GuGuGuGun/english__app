@@ -7,7 +7,10 @@ import com.kaoyan.wordhelper.KaoyanWordApp
 import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.data.entity.Word
+import com.kaoyan.wordhelper.data.model.AIContentType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -48,9 +51,23 @@ data class SearchSentenceAiState(
         get() = isEnabled && isConfigured
 }
 
+data class SearchWordAiState(
+    val wordId: Long? = null,
+    val isEnabled: Boolean = false,
+    val isConfigured: Boolean = false,
+    val isLoading: Boolean = false,
+    val content: String = "",
+    val error: String? = null
+) {
+    val isAvailable: Boolean
+        get() = isEnabled && isConfigured
+}
+
+@OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as KaoyanWordApp
     private val repository = app.repository
+    private val settingsRepository = app.settingsRepository
     private val aiConfigRepository = app.aiConfigRepository
     private val aiRepository = app.aiRepository
 
@@ -58,6 +75,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     val query: StateFlow<String> = _query.asStateFlow()
     private val _sentenceAiState = MutableStateFlow(SearchSentenceAiState())
     val sentenceAiState: StateFlow<SearchSentenceAiState> = _sentenceAiState.asStateFlow()
+    private val _wordAiState = MutableStateFlow(SearchWordAiState())
+    val wordAiState: StateFlow<SearchWordAiState> = _wordAiState.asStateFlow()
+    val pronunciationEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
+        .map { it.pronunciationEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     private var lastAnalyzedSentence: String? = null
 
     private val activeBookFlow: Flow<Book?> = repository.getActiveBookFlow()
@@ -108,6 +130,73 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             _sentenceAiState.value = _sentenceAiState.value.copy(
                 isEnabled = config.enabled,
                 isConfigured = config.isConfigured()
+            )
+            _wordAiState.value = _wordAiState.value.copy(
+                isEnabled = config.enabled,
+                isConfigured = config.isConfigured()
+            )
+        }
+    }
+
+    fun clearWordAiState() {
+        _wordAiState.value = _wordAiState.value.copy(
+            wordId = null,
+            isLoading = false,
+            content = "",
+            error = null
+        )
+    }
+
+    fun requestWordMemoryAid(word: Word, forceRefresh: Boolean = false) {
+        viewModelScope.launch {
+            val config = aiConfigRepository.getConfig()
+            val enabled = config.enabled
+            val configured = config.isConfigured()
+            _wordAiState.value = _wordAiState.value.copy(
+                wordId = word.id,
+                isEnabled = enabled,
+                isConfigured = configured
+            )
+            if (!enabled || !configured) {
+                _wordAiState.value = _wordAiState.value.copy(
+                    wordId = word.id,
+                    isLoading = false,
+                    content = "",
+                    error = "请先在 AI 实验室启用并配置 API Key"
+                )
+                return@launch
+            }
+
+            _wordAiState.value = _wordAiState.value.copy(
+                wordId = word.id,
+                isLoading = true,
+                error = null
+            )
+            val result = withContext(Dispatchers.IO) {
+                aiRepository.getAIContent(
+                    wordId = word.id,
+                    queryContent = word.word,
+                    type = AIContentType.MEMORY_AID,
+                    forceRefresh = forceRefresh
+                )
+            }
+            result.fold(
+                onSuccess = { content ->
+                    _wordAiState.value = _wordAiState.value.copy(
+                        wordId = word.id,
+                        isLoading = false,
+                        content = content,
+                        error = null
+                    )
+                },
+                onFailure = { throwable ->
+                    _wordAiState.value = _wordAiState.value.copy(
+                        wordId = word.id,
+                        isLoading = false,
+                        content = "",
+                        error = throwable.message ?: "AI 助记生成失败"
+                    )
+                }
             )
         }
     }

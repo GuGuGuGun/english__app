@@ -152,7 +152,7 @@ fun SpellingScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .padding(horizontal = 4.dp, vertical = 4.dp)
     ) {
         Column(
             modifier = Modifier
@@ -162,8 +162,9 @@ fun SpellingScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = statusColor.copy(alpha = 0.1f)
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, statusColor.copy(alpha = 0.22f)),
+                color = statusColor.copy(alpha = 0.09f)
             ) {
                 Column(
                     modifier = Modifier
@@ -192,7 +193,7 @@ fun SpellingScreen(
                         color = statusColor
                     )
                     LinearProgressIndicator(
-                        progress = attemptProgress,
+                        progress = { attemptProgress },
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 6.dp),
@@ -212,7 +213,8 @@ fun SpellingScreen(
             }
 
             Card(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
                 Box(
@@ -258,8 +260,8 @@ fun SpellingScreen(
             }
 
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
             ) {
                 Column(
                     modifier = Modifier
@@ -344,7 +346,7 @@ fun SpellingScreen(
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .imePadding(),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             tonalElevation = 2.dp,
             border = BorderStroke(1.dp, borderColor.copy(alpha = 0.35f)),
             color = MaterialTheme.colorScheme.surface
@@ -616,6 +618,6 @@ private fun elapsedDuration(startAt: Long): Long {
 }
 
 private fun vibrate(context: Context) {
-    val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
+    val vibrator = context.getSystemService(Vibrator::class.java) ?: return
     vibrator.vibrate(VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE))
 }

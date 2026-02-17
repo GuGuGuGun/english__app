@@ -26,6 +26,8 @@ object Sm2Scheduler {
     private const val MAX_GROWTH_FACTOR = 2.5f
     private const val HARD_GROWTH_FACTOR = 1.2f
     private const val SHORT_TERM_REVIEW_DECAY_HOURS = 12L
+    private const val V3_MIN_INTERVAL_DAYS = 1
+    private const val V3_GOOD_INTERVAL_DAYS = 2
     private val EBBINGHAUS_LADDER = intArrayOf(1, 2, 6, 14, 30)
 
     data class ScheduleResult(
@@ -56,18 +58,18 @@ object Sm2Scheduler {
             ease = (ease - 0.2f).coerceAtLeast(MIN_EASE)
             return ScheduleResult(
                 repetitions = 0,
-                intervalDays = 0,
+                intervalDays = V3_MIN_INTERVAL_DAYS,
                 easeFactor = ease,
-                nextReviewTime = now + ONE_MINUTE,
+                nextReviewTime = computeNextReviewTimeByDays(now, V3_MIN_INTERVAL_DAYS),
                 status = Progress.STATUS_LEARNING
             )
         }
 
         if (isLearningPhase) {
             val intervalDays = when (rating) {
-                StudyRating.HARD -> 0
-                StudyRating.GOOD -> 1
-                StudyRating.AGAIN -> 0
+                StudyRating.HARD -> V3_MIN_INTERVAL_DAYS
+                StudyRating.GOOD -> V3_GOOD_INTERVAL_DAYS
+                StudyRating.AGAIN -> V3_MIN_INTERVAL_DAYS
             }
             val effectiveReviewCount = previousReviewCount + 1
             return ScheduleResult(
@@ -175,9 +177,9 @@ object Sm2Scheduler {
             ease = (ease - 0.2f).coerceAtLeast(MIN_EASE_SPELLING)
             return ScheduleResult(
                 repetitions = 0,
-                intervalDays = 0,
+                intervalDays = V3_MIN_INTERVAL_DAYS,
                 easeFactor = ease,
-                nextReviewTime = now + ONE_MINUTE,
+                nextReviewTime = computeNextReviewTimeByDays(now, V3_MIN_INTERVAL_DAYS),
                 status = Progress.STATUS_LEARNING
             )
         }
@@ -185,10 +187,10 @@ object Sm2Scheduler {
         val intervalDays = when {
             isLearningPhase -> {
                 when (outcome) {
-                    SpellingOutcome.RETRY_SUCCESS -> 0
+                    SpellingOutcome.RETRY_SUCCESS -> V3_MIN_INTERVAL_DAYS
                     SpellingOutcome.HINTED,
-                    SpellingOutcome.PERFECT -> 1
-                    SpellingOutcome.FAILED -> 0
+                    SpellingOutcome.PERFECT -> V3_GOOD_INTERVAL_DAYS
+                    SpellingOutcome.FAILED -> V3_MIN_INTERVAL_DAYS
                 }
             }
 

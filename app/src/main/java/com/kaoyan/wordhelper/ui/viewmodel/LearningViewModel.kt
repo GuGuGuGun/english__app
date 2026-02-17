@@ -143,6 +143,9 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     val reviewPressureDailyCap: StateFlow<Int> = settingsRepository.settingsFlow
         .map { it.reviewPressureDailyCap.coerceIn(10, 500) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 120)
+    val pronunciationEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
+        .map { it.pronunciationEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     val canRelieveReviewPressure: StateFlow<Boolean> = combine(
         activeBook,
         reviewPressureReliefEnabled,

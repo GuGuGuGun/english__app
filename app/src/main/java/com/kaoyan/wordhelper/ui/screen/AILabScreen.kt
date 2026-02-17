@@ -117,7 +117,7 @@ fun AILabScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(text = "AI 实验室") },
+                title = { Text(text = "实验室") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -333,6 +333,123 @@ fun AILabScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "发音实验室", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    text = if (uiState.pronunciationEnabled) "功能状态：已开启" else "功能状态：已关闭",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.pronunciationEnabled,
+                                onCheckedChange = viewModel::updatePronunciationEnabled,
+                                modifier = Modifier.testTag("lab_pronunciation_switch")
+                            )
+                        }
+                        Text(
+                            text = "当前使用 Free Dictionary API（dictionaryapi.dev）获取英文单词发音音频，属于实验性功能。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "说明：仅在开关开启时，学习页和查词详情中的发音按钮才显示。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "补充：发音资源由公开词典提供，个别词可能无音频或网络波动导致播放失败。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "算法实验室", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    text = if (uiState.algorithmV4Enabled) "当前版本：V4 验证" else "当前版本：V3 稳定",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.algorithmV4Enabled,
+                                onCheckedChange = viewModel::updateAlgorithmV4Enabled,
+                                modifier = Modifier.testTag("lab_algorithm_switch")
+                            )
+                        }
+                        Text(
+                            text = "V3 稳定：已按天为记忆单位推进（最小间隔 1 天），节奏更平滑。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "V4 验证：结合答题耗时动态降级评分，纠偏更激进。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text(
+                            text = "算法说明书",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.testTag("lab_algorithm_manual")
+                        )
+                        Text(
+                            text = "1) 时间单位：V3 与 V4 均以“天”为记忆间隔单位，刷新时间点为次日 04:00。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "2) 认词评分：不认识(AGAIN) / 模糊(HARD) / 认识(GOOD)。V3 学习阶段会映射到 1 天或 2 天间隔。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "3) V3 核心：按 Ease 因子进行保守增长；满足间隔>=21天、复习次数>=2、Ease>=2.3 判定为已掌握。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "4) V4 核心：间隔会贴近艾宾浩斯阶梯(1/2/6/14/30天)，并在短时重复复习时触发衰减保护。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "5) 拼写模式：失败会重置到学习态；重试成功/有提示/完美拼写会对应不同增长幅度。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "6) 版本切换仅影响后续调度策略，不会回滚已产生的历史记录。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }

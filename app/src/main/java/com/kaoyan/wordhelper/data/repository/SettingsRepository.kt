@@ -15,6 +15,7 @@ private const val DEFAULT_REVIEW_PRESSURE_RELIEF_ENABLED = true
 private const val DEFAULT_REVIEW_PRESSURE_DAILY_CAP = 120
 private const val DEFAULT_SWIPE_GESTURE_GUIDE_SHOWN = false
 private const val DEFAULT_ALGORITHM_V4_ENABLED = false
+private const val DEFAULT_PRONUNCIATION_ENABLED = false
 private val Context.dataStore by preferencesDataStore(name = "user_settings")
 
 data class UserSettings(
@@ -24,7 +25,8 @@ data class UserSettings(
     val reviewPressureReliefEnabled: Boolean = DEFAULT_REVIEW_PRESSURE_RELIEF_ENABLED,
     val reviewPressureDailyCap: Int = DEFAULT_REVIEW_PRESSURE_DAILY_CAP,
     val swipeGestureGuideShown: Boolean = DEFAULT_SWIPE_GESTURE_GUIDE_SHOWN,
-    val algorithmV4Enabled: Boolean = DEFAULT_ALGORITHM_V4_ENABLED
+    val algorithmV4Enabled: Boolean = DEFAULT_ALGORITHM_V4_ENABLED,
+    val pronunciationEnabled: Boolean = DEFAULT_PRONUNCIATION_ENABLED
 )
 
 enum class DarkMode(val value: Int) {
@@ -52,7 +54,8 @@ class SettingsRepository(private val context: Context) {
             reviewPressureDailyCap = (prefs[KEY_REVIEW_PRESSURE_DAILY_CAP] ?: DEFAULT_REVIEW_PRESSURE_DAILY_CAP)
                 .coerceIn(10, 500),
             swipeGestureGuideShown = prefs[KEY_SWIPE_GESTURE_GUIDE_SHOWN] ?: DEFAULT_SWIPE_GESTURE_GUIDE_SHOWN,
-            algorithmV4Enabled = prefs[KEY_ALGORITHM_V4_ENABLED] ?: DEFAULT_ALGORITHM_V4_ENABLED
+            algorithmV4Enabled = prefs[KEY_ALGORITHM_V4_ENABLED] ?: DEFAULT_ALGORITHM_V4_ENABLED,
+            pronunciationEnabled = prefs[KEY_PRONUNCIATION_ENABLED] ?: DEFAULT_PRONUNCIATION_ENABLED
         )
     }
 
@@ -84,6 +87,10 @@ class SettingsRepository(private val context: Context) {
         dataStore.edit { prefs -> prefs[KEY_ALGORITHM_V4_ENABLED] = enabled }
     }
 
+    suspend fun updatePronunciationEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[KEY_PRONUNCIATION_ENABLED] = enabled }
+    }
+
     companion object {
 
         private val KEY_NEW_WORDS_LIMIT = intPreferencesKey("new_words_limit")
@@ -94,5 +101,6 @@ class SettingsRepository(private val context: Context) {
         private val KEY_REVIEW_PRESSURE_DAILY_CAP = intPreferencesKey("review_pressure_daily_cap")
         private val KEY_SWIPE_GESTURE_GUIDE_SHOWN = booleanPreferencesKey("swipe_gesture_guide_shown")
         private val KEY_ALGORITHM_V4_ENABLED = booleanPreferencesKey("algorithm_v4_enabled")
+        private val KEY_PRONUNCIATION_ENABLED = booleanPreferencesKey("pronunciation_enabled")
     }
 }

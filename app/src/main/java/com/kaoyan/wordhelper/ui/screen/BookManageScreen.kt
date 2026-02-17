@@ -3,6 +3,15 @@ package com.kaoyan.wordhelper.ui.screen
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,13 +25,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.LibraryBooks
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,9 +46,11 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,6 +60,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -59,6 +74,7 @@ import com.kaoyan.wordhelper.ui.viewmodel.BookUiModel
 import com.kaoyan.wordhelper.ui.viewmodel.EarlyReviewCandidate
 import com.kaoyan.wordhelper.ui.viewmodel.EarlyReviewUiState
 import com.kaoyan.wordhelper.ui.viewmodel.MasteryDistribution
+import kotlin.math.min
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,6 +96,7 @@ fun BookManageScreen(
     var selectedBook by remember { mutableStateOf<BookUiModel?>(null) }
     var earlyReviewBook by remember { mutableStateOf<BookUiModel?>(null) }
     var pendingExport by remember { mutableStateOf<BookUiModel?>(null) }
+    var contentVisible by remember { mutableStateOf(false) }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         viewModel.onImportFileSelected(uri)
@@ -97,6 +114,10 @@ fun BookManageScreen(
             Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
             viewModel.clearMessage()
         }
+    }
+
+    LaunchedEffect(Unit) {
+        contentVisible = true
     }
 
     if (pendingDelete != null) {
@@ -228,6 +249,10 @@ fun BookManageScreen(
         topBar = {
             TopAppBar(
                 title = { Text(text = "我的词库") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                ),
                 actions = {
                     TextButton(onClick = onOpenBuildGuide) {
                         Text(text = "教程")
@@ -243,39 +268,102 @@ fun BookManageScreen(
         floatingActionButton = {
             FloatingActionButton(onClick = {
                 importLauncher.launch(arrayOf("text/plain", "text/csv", "text/*", "application/*"))
-            }) {
-                Icon(imageVector = Icons.Filled.Add, contentDescription = "导入词书")
+            }, containerColor = MaterialTheme.colorScheme.primaryContainer) {
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = "导入词书",
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
             }
         }
     ) { innerPadding ->
+        val pageBrush = Brush.verticalGradient(
+            colors = listOf(
+                MaterialTheme.colorScheme.background,
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.05f),
+                MaterialTheme.colorScheme.background
+            )
+        )
+        val activeBookName = books.firstOrNull { it.book.isActive }?.book?.name ?: "-"
+        val totalWords = books.sumOf { it.total }
+
         Column(
             modifier = Modifier
                 .padding(innerPadding)
                 .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .background(pageBrush)
+                .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
-            if (isImporting) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                Spacer(modifier = Modifier.height(12.dp))
+            AnimatedVisibility(
+                visible = contentVisible,
+                enter = fadeIn(animationSpec = tween(260)) +
+                    slideInVertically(initialOffsetY = { it / 4 }, animationSpec = tween(320))
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
+                    color = MaterialTheme.colorScheme.surface
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "当前词书：$activeBookName",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "词书 ${books.size} 本 · 累计词条 $totalWords",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            AnimatedVisibility(
+                visible = isImporting,
+                enter = fadeIn(animationSpec = tween(180)) + expandVertically(animationSpec = tween(240))
+            ) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+
+            if (isImporting) {
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(books, key = { it.book.id }) { item ->
-                    BookListItem(
-                        item = item,
-                        onSwitch = { viewModel.switchBook(item.book.id) },
-                        onDelete = { pendingDelete = item },
-                        onClearNewWords = { showClearDialog = true },
-                        onStartSpelling = onStartSpelling,
-                        onOpenEarlyReview = {
-                            earlyReviewBook = item
-                            viewModel.openEarlyReviewSelector(item.book.id)
-                        },
-                        onOpenDetail = { selectedBook = item },
-                        onExport = {
-                            pendingExport = item
-                            exportLauncher.launch(viewModel.suggestExportFileName(item.book.name))
-                        }
-                    )
+                itemsIndexed(books, key = { _, item -> item.book.id }) { index, item ->
+                    AnimatedVisibility(
+                        visible = contentVisible,
+                        enter = fadeIn(animationSpec = tween(240, delayMillis = min(index * 30, 210))) +
+                            slideInVertically(
+                                initialOffsetY = { it / 3 },
+                                animationSpec = tween(320, delayMillis = min(index * 30, 210))
+                            )
+                    ) {
+                        BookListItem(
+                            item = item,
+                            onSwitch = { viewModel.switchBook(item.book.id) },
+                            onDelete = { pendingDelete = item },
+                            onClearNewWords = { showClearDialog = true },
+                            onStartSpelling = onStartSpelling,
+                            onOpenEarlyReview = {
+                                earlyReviewBook = item
+                                viewModel.openEarlyReviewSelector(item.book.id)
+                            },
+                            onOpenDetail = { selectedBook = item },
+                            onExport = {
+                                pendingExport = item
+                                exportLauncher.launch(viewModel.suggestExportFileName(item.book.name))
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -307,13 +395,21 @@ private fun BookDetailSheet(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Row(
+        Surface(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
         ) {
-            DetailStat(label = "已学习", value = item.learned)
-            DetailStat(label = "已掌握", value = item.mastered)
-            DetailStat(label = "待复习", value = item.dueCount)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                DetailStat(label = "已学习", value = item.learned)
+                DetailStat(label = "已掌握", value = item.mastered)
+                DetailStat(label = "待复习", value = item.dueCount)
+            }
         }
         if (item.book.type != Book.TYPE_NEW_WORDS) {
             Text(
@@ -375,6 +471,11 @@ private fun BookListItem(
     onExport: () -> Unit
 ) {
     val progress = if (item.total > 0) item.learned.toFloat() / item.total else 0f
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 550),
+        label = "bookProgress"
+    )
     val progressText = if (item.book.type == Book.TYPE_NEW_WORDS) {
         "已收录 ${item.total}"
     } else {
@@ -390,8 +491,13 @@ private fun BookListItem(
     val statsText = "已掌握率 $masteryRate% · 待复习 ${item.dueCount} · 提前复习 ${item.earlyReviewCount} · 预计学完 $estimateText"
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onOpenDetail
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(260)),
+        onClick = onOpenDetail,
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
     ) {
         Row(
             modifier = Modifier
@@ -400,7 +506,7 @@ private fun BookListItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = if (item.book.type == Book.TYPE_NEW_WORDS) Icons.Filled.Star else Icons.Outlined.LibraryBooks,
+                imageVector = if (item.book.type == Book.TYPE_NEW_WORDS) Icons.Filled.Star else Icons.Filled.Search,
                 contentDescription = null,
                 modifier = Modifier.size(28.dp)
             )
@@ -413,7 +519,7 @@ private fun BookListItem(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
+                LinearProgressIndicator(progress = { animatedProgress }, modifier = Modifier.fillMaxWidth())
             }
             Spacer(modifier = Modifier.size(12.dp))
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -530,7 +636,10 @@ private fun EarlyReviewCandidateItem(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        onClick = onToggle
+        onClick = onToggle,
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f))
     ) {
         Row(
             modifier = Modifier

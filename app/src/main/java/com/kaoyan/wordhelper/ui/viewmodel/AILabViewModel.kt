@@ -7,6 +7,7 @@ import com.kaoyan.wordhelper.KaoyanWordApp
 import com.kaoyan.wordhelper.data.model.AIConfig
 import com.kaoyan.wordhelper.data.model.AIPresets
 import com.kaoyan.wordhelper.data.model.AIProviderPreset
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +20,8 @@ data class AILabUiState(
     val baseUrl: String = AIPresets.OPENAI.baseUrl,
     val modelName: String = AIConfig.DEFAULT_MODEL_NAME,
     val apiKey: String = "",
+    val algorithmV4Enabled: Boolean = false,
+    val pronunciationEnabled: Boolean = false,
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val isTesting: Boolean = false
@@ -27,6 +30,8 @@ data class AILabUiState(
 class AILabViewModel(application: Application) : AndroidViewModel(application) {
     private val aiConfigRepository = (application as KaoyanWordApp).aiConfigRepository
     private val aiRepository = (application as KaoyanWordApp).aiRepository
+    private val settingsRepository = (application as KaoyanWordApp).settingsRepository
+    private val wordRepository = (application as KaoyanWordApp).repository
 
     val presets: List<AIProviderPreset> = AIPresets.presets
 
@@ -44,6 +49,7 @@ class AILabViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             val config = aiConfigRepository.getConfig()
+            val settings = settingsRepository.settingsFlow.first()
             val normalizedBaseUrl = AIPresets.normalizeBaseUrl(config.apiBaseUrl)
             _uiState.value = AILabUiState(
                 enabled = config.enabled,
@@ -51,8 +57,27 @@ class AILabViewModel(application: Application) : AndroidViewModel(application) {
                 baseUrl = normalizedBaseUrl.ifBlank { AIPresets.OPENAI.baseUrl },
                 modelName = config.modelName,
                 apiKey = config.apiKey,
+                algorithmV4Enabled = settings.algorithmV4Enabled,
+                pronunciationEnabled = settings.pronunciationEnabled,
                 isLoading = false
             )
+        }
+    }
+
+    fun updateAlgorithmV4Enabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateAlgorithmV4Enabled(enabled)
+            if (enabled) {
+                wordRepository.repairMasteredStatusForV4()
+            }
+            _uiState.update { it.copy(algorithmV4Enabled = enabled) }
+        }
+    }
+
+    fun updatePronunciationEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updatePronunciationEnabled(enabled)
+            _uiState.update { it.copy(pronunciationEnabled = enabled) }
         }
     }
 

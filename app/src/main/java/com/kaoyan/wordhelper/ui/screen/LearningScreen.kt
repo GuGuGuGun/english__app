@@ -13,7 +13,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -89,6 +92,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kaoyan.wordhelper.KaoyanWordApp
 import com.kaoyan.wordhelper.R
 import com.kaoyan.wordhelper.data.entity.Word
 import com.kaoyan.wordhelper.data.entity.Book
@@ -101,12 +105,16 @@ import com.kaoyan.wordhelper.ui.theme.FuzzyYellow
 import com.kaoyan.wordhelper.ui.theme.KnownGreen
 import com.kaoyan.wordhelper.ui.viewmodel.LearningAiState
 import com.kaoyan.wordhelper.ui.viewmodel.LearningViewModel
+import com.kaoyan.wordhelper.util.PronunciationPlayer
+import com.kaoyan.wordhelper.util.rememberPronunciationPlayer
 import com.kaoyan.wordhelper.util.DateUtils
 import com.kaoyan.wordhelper.util.GestureHandler
 import com.kaoyan.wordhelper.util.Sm2Scheduler
 import com.kaoyan.wordhelper.util.SwipeAction
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -130,6 +138,7 @@ fun LearningScreen(
     val canRelieveReviewPressure by viewModel.canRelieveReviewPressure.collectAsStateWithLifecycle()
     val reviewPressureDailyCap by viewModel.reviewPressureDailyCap.collectAsStateWithLifecycle()
     val algorithmV4Enabled by viewModel.algorithmV4Enabled.collectAsStateWithLifecycle()
+    val pronunciationEnabled by viewModel.pronunciationEnabled.collectAsStateWithLifecycle()
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
     val cachedExampleContent by viewModel.cachedExampleContent.collectAsStateWithLifecycle()
     val cachedMemoryAidContent by viewModel.cachedMemoryAidContent.collectAsStateWithLifecycle()
@@ -138,6 +147,11 @@ fun LearningScreen(
     val swipeSnackbarEvent by viewModel.swipeSnackbarEvent.collectAsStateWithLifecycle()
     val showSwipeGuide by viewModel.showSwipeGuide.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val pronunciationRepository = remember(context) {
+        (context.applicationContext as KaoyanWordApp).pronunciationRepository
+    }
+    val pronunciationPlayer: PronunciationPlayer = rememberPronunciationPlayer()
+    val uiScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
     var showSheet by remember { mutableStateOf(false) }
@@ -147,6 +161,7 @@ fun LearningScreen(
     var showAiGuideDialog by remember { mutableStateOf(false) }
     var isCardFlipped by remember { mutableStateOf(false) }
     var lastRating by remember { mutableStateOf<StudyRating?>(null) }
+    var pronouncingWordId by remember { mutableStateOf<Long?>(null) }
     var learningMode by rememberSaveable { mutableStateOf(initialMode) }
     var hideSwipeGuideInSession by rememberSaveable { mutableStateOf(false) }
 
@@ -234,6 +249,28 @@ fun LearningScreen(
         } else {
             showAiGuideDialog = true
             showAiAssistantPage = false
+        }
+    }
+
+    fun playPronunciation(word: Word) {
+        if (!pronunciationEnabled) return
+        if (pronouncingWordId == word.id) return
+        pronouncingWordId = word.id
+        uiScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                pronunciationRepository.getPronunciationAudioUrl(word.word)
+            }
+            result.onSuccess { audioUrl ->
+                pronunciationPlayer.play(
+                    url = audioUrl,
+                    onError = { errMsg ->
+                        Toast.makeText(context, errMsg, Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }.onFailure { throwable ->
+                Toast.makeText(context, throwable.message ?: "单词发音失败", Toast.LENGTH_SHORT).show()
+            }
+            pronouncingWordId = null
         }
     }
 
@@ -366,62 +403,126 @@ fun LearningScreen(
         return
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    val pageBrush = Brush.verticalGradient(
+        colors = listOf(
+            MaterialTheme.colorScheme.background,
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.06f),
+            MaterialTheme.colorScheme.background
+        )
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(pageBrush)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Row(
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)
+                )
             ) {
-                TextButton(onClick = { showSheet = true }) {
-                    AnimatedContent(
-                        targetState = activeBook?.name ?: "暂无词书",
-                        transitionSpec = {
-                            fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200))
-                        },
-                        label = "activeBookName"
-                    ) { title ->
-                        Text(text = title, modifier = Modifier.testTag("learning_book_title"))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            modifier = Modifier.clickable { showSheet = true },
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AnimatedContent(
+                                    targetState = activeBook?.name ?: "暂无词书",
+                                    transitionSpec = {
+                                        fadeIn(animationSpec = tween(180)) togetherWith fadeOut(animationSpec = tween(180))
+                                    },
+                                    label = "activeBookName"
+                                ) { title ->
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier.testTag("learning_book_title")
+                                    )
+                                }
+                                Icon(imageVector = Icons.Filled.KeyboardArrowDown, contentDescription = null)
+                            }
+                        }
+
                     }
-                    Icon(imageVector = Icons.Filled.KeyboardArrowDown, contentDescription = null)
+
+                    TabRow(
+                        selectedTabIndex = learningMode.ordinal,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        divider = {},
+                        indicator = {}
+                    ) {
+                        Tab(
+                            selected = learningMode == LearningMode.RECOGNITION,
+                            onClick = {
+                                learningMode = LearningMode.RECOGNITION
+                                onModeChange(learningMode)
+                            },
+                            selectedContentColor = MaterialTheme.colorScheme.primary,
+                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("learning_mode_recognition"),
+                            text = {
+                                Text(
+                                    text = "认词模式",
+                                    fontWeight = if (learningMode == LearningMode.RECOGNITION) {
+                                        FontWeight.SemiBold
+                                    } else {
+                                        FontWeight.Normal
+                                    }
+                                )
+                            }
+                        )
+                        Tab(
+                            selected = learningMode == LearningMode.SPELLING,
+                            onClick = {
+                                learningMode = LearningMode.SPELLING
+                                onModeChange(learningMode)
+                            },
+                            selectedContentColor = MaterialTheme.colorScheme.primary,
+                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("learning_mode_spelling"),
+                            text = {
+                                Text(
+                                    text = "拼写模式",
+                                    fontWeight = if (learningMode == LearningMode.SPELLING) {
+                                        FontWeight.SemiBold
+                                    } else {
+                                        FontWeight.Normal
+                                    }
+                                )
+                            }
+                        )
+                    }
                 }
-                val countText = if (totalCount > 0) "$currentIndex/$totalCount" else "0/0"
-                Text(
-                    text = countText,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.testTag("learning_count_text")
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-
-            TabRow(selectedTabIndex = learningMode.ordinal) {
-                Tab(
-                    selected = learningMode == LearningMode.RECOGNITION,
-                    onClick = {
-                        learningMode = LearningMode.RECOGNITION
-                        onModeChange(learningMode)
-                    },
-                    modifier = Modifier.testTag("learning_mode_recognition"),
-                    text = { Text(text = "认词模式") }
-                )
-                Tab(
-                    selected = learningMode == LearningMode.SPELLING,
-                    onClick = {
-                        learningMode = LearningMode.SPELLING
-                        onModeChange(learningMode)
-                    },
-                    modifier = Modifier.testTag("learning_mode_spelling"),
-                    text = { Text(text = "拼写模式") }
-                )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-            Spacer(modifier = Modifier.height(4.dp))
+
             if (canRelieveReviewPressure) {
                 ReviewPressureReliefBanner(
                     dueReviewCount = dueReviewCount,
@@ -429,11 +530,16 @@ fun LearningScreen(
                     onRelieve = viewModel::disperseReviewPressure,
                     enabled = !isAnswering
                 )
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
             }
 
             if (currentWord == null) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text(text = "暂无单词", style = MaterialTheme.typography.bodyLarge)
                 }
             } else {
@@ -447,12 +553,11 @@ fun LearningScreen(
                             verticalArrangement = Arrangement.spacedBy(RECOGNITION_SECTION_SPACING)
                         ) {
                             RecognitionHintBanner()
-                            Column(
+                            Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .weight(1f)
-                                    .verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(RECOGNITION_SECTION_SPACING)
+                                    .weight(1f),
+                                contentAlignment = Alignment.Center
                             ) {
                                 AnimatedContent(
                                     targetState = cardState,
@@ -465,6 +570,7 @@ fun LearningScreen(
                                         onSwipeAddToNotebook = viewModel::onSwipeAddToNotebook,
                                         modifier = Modifier
                                             .fillMaxWidth()
+                                            .fillMaxHeight()
                                             .testTag("learning_word_card")
                                     ) { swipeModifier ->
                                         WordCard(
@@ -476,9 +582,12 @@ fun LearningScreen(
                                             aiAvailable = aiState.isAvailable,
                                             aiSuggested = memoryAidSuggestionWordId == currentWord!!.id,
                                             onAiEntryClick = ::openAiEntry,
+                                            onPronounceClick = { playPronunciation(state.word) },
+                                            showPronounceButton = pronunciationEnabled,
+                                            pronounceLoading = pronouncingWordId == state.word.id,
                                             onFlipChanged = { isCardFlipped = it },
                                             starEnabled = !isAnswering,
-                                            modifier = swipeModifier
+                                            modifier = swipeModifier.fillMaxHeight()
                                         )
                                     }
                                 }
@@ -495,11 +604,6 @@ fun LearningScreen(
                                         handleAnswer(StudyRating.GOOD)
                                     }
                                 }
-                            )
-                            LearningProgressPanel(
-                                currentIndex = currentIndex,
-                                totalCount = totalCount,
-                                learningMode = learningMode
                             )
                         }
                     }
@@ -537,15 +641,16 @@ fun LearningScreen(
                                     .fillMaxWidth()
                                     .weight(1f)
                             )
-                            LearningProgressPanel(
-                                currentIndex = currentIndex,
-                                totalCount = totalCount,
-                                learningMode = learningMode
-                            )
                         }
                     }
                 }
             }
+
+            BottomLearningProgressBar(
+                currentIndex = currentIndex,
+                totalCount = totalCount,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
 
         SnackbarHost(
@@ -559,7 +664,7 @@ fun LearningScreen(
 
 private const val SM2_DESCRIPTION =
     "SM-2 调度说明：不认识会在会话内重试，模糊保守推进，认识按记忆因子增长间隔。"
-private val RECOGNITION_SECTION_SPACING = 12.dp
+private val RECOGNITION_SECTION_SPACING = 14.dp
 private const val SWIPE_TRIGGER_RATIO = 0.3f
 private const val SWIPE_ACTIVE_ZONE_RATIO = 0.8f
 
@@ -786,62 +891,48 @@ private fun SwipeGestureCoachMarkDialog(
 }
 
 @Composable
-private fun LearningProgressPanel(
+private fun BottomLearningProgressBar(
     currentIndex: Int,
     totalCount: Int,
-    learningMode: LearningMode,
     modifier: Modifier = Modifier
 ) {
     val rawProgress = if (totalCount > 0) currentIndex.toFloat() / totalCount else 0f
     val progress by animateFloatAsState(
         targetValue = rawProgress.coerceIn(0f, 1f),
-        animationSpec = tween(durationMillis = 300),
-        label = "learningProgress"
+        animationSpec = tween(durationMillis = 260),
+        label = "learningBottomProgress"
     )
-    val progressPercent = (progress * 100).roundToInt()
-    val remainingCount = (totalCount - currentIndex).coerceAtLeast(0)
-    val modeLabel = if (learningMode == LearningMode.RECOGNITION) "认词进度" else "拼写进度"
-    val footerText = if (totalCount > 0) "还剩 $remainingCount 个单词" else "当前词书暂无可学习单词"
+    val progressText = if (totalCount > 0) "$currentIndex/$totalCount" else "0/0"
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = modeLabel,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = "$progressPercent%",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            LinearProgressIndicator(
-                progress = progress,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(7.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
-            )
             Text(
-                text = footerText,
-                style = MaterialTheme.typography.bodySmall,
+                text = "学习进度",
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Text(
+                text = progressText,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold
+            )
         }
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp),
+            color = MaterialTheme.colorScheme.primary,
+            trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+        )
     }
 }
 
@@ -849,14 +940,18 @@ private fun LearningProgressPanel(
 private fun RecognitionHintBanner(modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+        ),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
     ) {
         Text(
-            text = "先判断是否认识，再翻卡核对释义；支持左滑“太简单”、右滑“加入生词本”。",
+            text = "先判断是否认识，再翻卡核对释义；左滑标记太简单，右滑快速入生词本。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
         )
     }
 }
@@ -1317,8 +1412,12 @@ private fun ReviewPressureReliefBanner(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f)
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.28f)
+        ),
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.42f)
     ) {
         Row(
             modifier = Modifier
@@ -1358,8 +1457,12 @@ private fun RecognitionActionPanel(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
+        shape = RoundedCornerShape(22.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)
+        ),
+        color = MaterialTheme.colorScheme.surface
     ) {
         Row(
             modifier = Modifier
@@ -1370,11 +1473,12 @@ private fun RecognitionActionPanel(
             FilledTonalButton(
                 onClick = onAgain,
                 enabled = !isAnswering,
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .weight(1f)
                     .testTag("learning_action_again"),
                 colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = AlertRed.copy(alpha = 0.14f),
+                    containerColor = AlertRed.copy(alpha = 0.18f),
                     contentColor = AlertRed
                 )
             ) {
@@ -1383,11 +1487,12 @@ private fun RecognitionActionPanel(
             FilledTonalButton(
                 onClick = onHard,
                 enabled = !isAnswering,
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .weight(1f)
                     .testTag("learning_action_hard"),
                 colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = FuzzyYellow.copy(alpha = 0.24f),
+                    containerColor = FuzzyYellow.copy(alpha = 0.28f),
                     contentColor = MaterialTheme.colorScheme.onSurface
                 )
             ) {
@@ -1397,11 +1502,12 @@ private fun RecognitionActionPanel(
             FilledTonalButton(
                 onClick = onGood,
                 enabled = !isAnswering,
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .weight(1f)
                     .testTag("learning_action_good"),
                 colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = KnownGreen.copy(alpha = 0.2f),
+                    containerColor = KnownGreen.copy(alpha = 0.22f),
                     contentColor = KnownGreen
                 )
             ) {
@@ -1421,6 +1527,9 @@ private fun WordCard(
     aiAvailable: Boolean,
     aiSuggested: Boolean,
     onAiEntryClick: () -> Unit,
+    onPronounceClick: () -> Unit,
+    showPronounceButton: Boolean,
+    pronounceLoading: Boolean,
     onFlipChanged: (Boolean) -> Unit,
     starEnabled: Boolean,
     modifier: Modifier = Modifier
@@ -1453,20 +1562,24 @@ private fun WordCard(
 
     val frontBrush = Brush.verticalGradient(
         colors = listOf(
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.13f),
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.52f),
             MaterialTheme.colorScheme.surface
         )
     )
     val backBrush = Brush.verticalGradient(
         colors = listOf(
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.58f),
             MaterialTheme.colorScheme.surface
         )
     )
 
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(28.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.26f)
+        ),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         onClick = {
             isFlipped = !isFlipped
@@ -1476,16 +1589,38 @@ private fun WordCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .fillMaxHeight()
                 .background(if (showFront) frontBrush else backBrush)
-                .padding(horizontal = 20.dp, vertical = 18.dp)
-                .heightIn(min = 300.dp)
+                .padding(horizontal = 20.dp, vertical = 20.dp)
+                .heightIn(min = 220.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                ReviewTimeTag(text = reviewTag, onClick = onReviewTagClick)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ReviewTimeTag(text = reviewTag, onClick = onReviewTagClick)
+                    if (showPronounceButton) {
+                        OutlinedButton(
+                            onClick = onPronounceClick,
+                            enabled = !pronounceLoading,
+                            modifier = Modifier.testTag("learning_pronounce_button")
+                        ) {
+                            if (pronounceLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Text(text = "发音")
+                            }
+                        }
+                    }
+                }
                 AnimatedStarToggle(
                     checked = isInNewWords,
                     onCheckedChange = { onToggleNewWords() },
@@ -1513,9 +1648,9 @@ private fun WordCard(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                                .padding(horizontal = 14.dp, vertical = 14.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)
+                            verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)
                         ) {
                             Text(
                                 text = word.word,
@@ -1536,7 +1671,7 @@ private fun WordCard(
                                 }
                             }
                             Text(
-                                text = "轻触卡片查看释义",
+                                text = "轻触卡片查看释义与例句",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
@@ -1573,19 +1708,24 @@ private fun WordCard(
                                 )
                                 Text(
                                     text = word.meaning,
-                                    style = MaterialTheme.typography.bodyLarge
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 5,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                             if (word.example.isNotBlank()) {
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                                 ) {
                                     Text(
                                         text = "例句  ${word.example}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        maxLines = 4,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
@@ -1636,7 +1776,7 @@ private fun ReviewTimeTag(
         modifier = modifier
             .testTag("learning_review_tag")
             .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.primaryContainer,
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.68f),
         shape = RoundedCornerShape(18.dp),
         tonalElevation = 1.dp
     ) {
@@ -1663,49 +1803,63 @@ private fun ReviewTimeTag(
 private fun AnimatedContentTransitionScope<WordCardState>.wordCardTransition(
     lastRating: StudyRating?
 ): ContentTransform {
-    val slideSpec = tween<IntOffset>(durationMillis = 260)
-    val fadeInSpec = tween<Float>(durationMillis = 200)
-    val fadeOutSpec = tween<Float>(durationMillis = 180)
-    val scaleSpec = tween<Float>(durationMillis = 220)
+    val defaultFadeIn = tween<Float>(durationMillis = 180)
+    val defaultFadeOut = tween<Float>(durationMillis = 150)
 
     return when (lastRating) {
         StudyRating.GOOD -> {
             (slideInHorizontally(
-                initialOffsetX = { it },
-                animationSpec = slideSpec
-            ) + fadeIn(animationSpec = fadeInSpec, initialAlpha = 0.3f))
+                initialOffsetX = { it / 2 },
+                animationSpec = tween(durationMillis = 220)
+            ) +
+                fadeIn(animationSpec = tween(durationMillis = 180, delayMillis = 30), initialAlpha = 0.42f) +
+                scaleIn(initialScale = 0.92f, animationSpec = tween(durationMillis = 220)))
                 .togetherWith(
                     slideOutHorizontally(
-                        targetOffsetX = { it },
-                        animationSpec = slideSpec
-                    ) + fadeOut(animationSpec = fadeOutSpec, targetAlpha = 0.3f)
+                        targetOffsetX = { -it / 3 },
+                        animationSpec = tween(durationMillis = 190)
+                    ) +
+                        fadeOut(animationSpec = tween(durationMillis = 170), targetAlpha = 0.2f) +
+                        scaleOut(targetScale = 1.03f, animationSpec = tween(durationMillis = 190))
                 )
         }
 
         StudyRating.AGAIN -> {
             (slideInHorizontally(
                 initialOffsetX = { -it },
-                animationSpec = slideSpec
-            ) + fadeIn(animationSpec = fadeInSpec, initialAlpha = 0.3f))
+                animationSpec = tween(durationMillis = 320)
+            ) +
+                fadeIn(animationSpec = tween(durationMillis = 220), initialAlpha = 0.28f) +
+                scaleIn(initialScale = 0.9f, animationSpec = tween(durationMillis = 300)))
                 .togetherWith(
                     slideOutHorizontally(
-                        targetOffsetX = { -it },
-                        animationSpec = slideSpec
-                    ) + fadeOut(animationSpec = fadeOutSpec, targetAlpha = 0.3f)
+                        targetOffsetX = { it / 2 },
+                        animationSpec = tween(durationMillis = 300)
+                    ) +
+                        fadeOut(animationSpec = tween(durationMillis = 220), targetAlpha = 0.16f) +
+                        scaleOut(targetScale = 0.92f, animationSpec = tween(durationMillis = 280))
                 )
         }
 
         StudyRating.HARD -> {
-            (fadeIn(animationSpec = fadeInSpec, initialAlpha = 0.2f) +
-                scaleIn(initialScale = 0.96f, animationSpec = scaleSpec))
+            (slideInVertically(
+                initialOffsetY = { it / 4 },
+                animationSpec = tween(durationMillis = 260)
+            ) +
+                fadeIn(animationSpec = tween(durationMillis = 210), initialAlpha = 0.26f) +
+                scaleIn(initialScale = 0.95f, animationSpec = tween(durationMillis = 240)))
                 .togetherWith(
-                    fadeOut(animationSpec = fadeOutSpec, targetAlpha = 0.2f) +
-                        scaleOut(targetScale = 0.96f, animationSpec = scaleSpec)
+                    slideOutVertically(
+                        targetOffsetY = { -it / 6 },
+                        animationSpec = tween(durationMillis = 230)
+                    ) +
+                        fadeOut(animationSpec = tween(durationMillis = 200), targetAlpha = 0.2f) +
+                        scaleOut(targetScale = 0.97f, animationSpec = tween(durationMillis = 220))
                 )
         }
 
         else -> {
-            fadeIn(animationSpec = fadeInSpec) togetherWith fadeOut(animationSpec = fadeOutSpec)
+            fadeIn(animationSpec = defaultFadeIn) togetherWith fadeOut(animationSpec = defaultFadeOut)
         }
     }.using(SizeTransform(clip = false))
 }
