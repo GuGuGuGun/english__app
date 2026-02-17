@@ -1,5 +1,8 @@
 package com.kaoyan.wordhelper.util
 
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import com.kaoyan.wordhelper.data.model.WordDraft
 
 object WordFileParser {
@@ -9,6 +12,10 @@ object WordFileParser {
 
     fun parse(text: String): List<WordDraft> {
         val normalizedText = text.removePrefix("\uFEFF")
+        val adaptiveJson = parseAdaptiveJson(normalizedText)
+        if (adaptiveJson.isNotEmpty()) {
+            return adaptiveJson
+        }
         val logicalLines = mergeMeaningContinuationLines(splitLogicalLines(normalizedText))
         val lineBased = parseLines(logicalLines.asSequence())
         val packed = if (looksLikePackedWordMeaningText(normalizedText)) {
@@ -296,5 +303,207 @@ object WordFileParser {
             index += 1
         }
         return index
+    }
+
+    private fun parseAdaptiveJson(text: String): List<WordDraft> {
+        val trimmed = text.trimStart()
+        if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) {
+            return emptyList()
+        }
+
+        val root = runCatching { JsonParser.parseString(text) }.getOrNull() ?: return emptyList()
+        val entries = mutableListOf<JsonObject>()
+        collectWordEntryObjects(root, entries)
+        if (entries.isEmpty()) {
+            return emptyList()
+        }
+
+        return entries.asSequence()
+            .mapNotNull(::toWordDraft)
+            .distinctBy { it.word.trim().lowercase() }
+            .toList()
+    }
+
+    private fun collectWordEntryObjects(element: JsonElement?, output: MutableList<JsonObject>) {
+        if (element == null || element.isJsonNull) return
+        when {
+            element.isJsonArray -> {
+                element.asJsonArray.forEach { item ->
+                    collectWordEntryObjects(item, output)
+                }
+            }
+
+            element.isJsonObject -> {
+                val obj = element.asJsonObject
+                if (obj.string("word").isNotBlank()) {
+                    output.add(obj)
+                    return
+                }
+                obj.get("data")?.let { collectWordEntryObjects(it, output) }
+                obj.get("items")?.let { collectWordEntryObjects(it, output) }
+                obj.get("list")?.let { collectWordEntryObjects(it, output) }
+            }
+        }
+    }
+
+    private fun toWordDraft(entry: JsonObject): WordDraft? {
+        val word = entry.string("word")
+        if (word.isBlank()) return null
+
+        val rawPhonetic = entry.string("ukphone")
+            .ifBlank { entry.string("usphone") }
+            .ifBlank { entry.string("phonetic") }
+        val phonetic = when {
+            rawPhonetic.isBlank() -> ""
+            rawPhonetic.startsWith("[") && rawPhonetic.endsWith("]") -> rawPhonetic
+            else -> "[$rawPhonetic]"
+        }
+        val phrases = buildPhrases(entry)
+        val synonyms = buildSynonyms(entry)
+        val relWords = buildRelWords(entry)
+
+        return WordDraft(
+            word = word,
+            phonetic = phonetic,
+            meaning = buildMeaning(entry),
+            example = buildExample(entry),
+            phrases = phrases,
+            synonyms = synonyms,
+            relWords = relWords
+        )
+    }
+
+    private fun buildMeaning(entry: JsonObject): String {
+        val translations = entry.array("translations")
+            .mapNotNull { item ->
+                if (item.isJsonPrimitive) {
+                    return@mapNotNull item.asStringOrEmpty().takeIf { it.isNotBlank() }
+                }
+                val obj = item.asJsonObjectOrNull() ?: return@mapNotNull null
+                val text = obj.string("tran_cn").ifBlank { obj.string("tranCn") }
+                if (text.isBlank()) return@mapNotNull null
+                val pos = obj.string("pos")
+                if (pos.isBlank()) text else "$pos. $text"
+            }
+        if (translations.isNotEmpty()) {
+            return translations.joinToString("；")
+        }
+
+        val phraseFallback = buildPhrases(entry)
+        if (phraseFallback.isNotBlank()) {
+            return phraseFallback
+        }
+
+        val synonymFallback = buildSynonyms(entry)
+        if (synonymFallback.isNotBlank()) {
+            return synonymFallback
+        }
+
+        val relWordFallback = buildRelWords(entry)
+        if (relWordFallback.isNotBlank()) {
+            return relWordFallback
+        }
+
+        return entry.string("meaning")
+    }
+
+    private fun buildExample(entry: JsonObject): String {
+        val sentence = entry.array("sentences")
+            .mapNotNull { it.asJsonObjectOrNull() }
+            .firstOrNull()
+        if (sentence != null) {
+            val en = sentence.string("s_content").ifBlank { sentence.string("content") }
+            val cn = sentence.string("s_cn").ifBlank { sentence.string("cn") }
+            if (en.isNotBlank() && cn.isNotBlank()) return "$en\n$cn"
+            if (en.isNotBlank()) return en
+            if (cn.isNotBlank()) return cn
+        }
+        return entry.string("example")
+    }
+
+    private fun buildPhrases(entry: JsonObject): String {
+        return entry.array("phrases")
+            .mapNotNull { item ->
+                if (item.isJsonPrimitive) {
+                    return@mapNotNull item.asStringOrEmpty().takeIf { it.isNotBlank() }
+                }
+                val obj = item.asJsonObjectOrNull() ?: return@mapNotNull null
+                val content = obj.string("p_content").ifBlank { obj.string("content") }
+                if (content.isBlank()) return@mapNotNull null
+                val cn = obj.string("p_cn").ifBlank { obj.string("cn") }
+                if (cn.isBlank()) content else "$content（$cn）"
+            }
+            .take(3)
+            .joinToString("；")
+    }
+
+    private fun buildSynonyms(entry: JsonObject): String {
+        return entry.array("synonyms")
+            .mapNotNull { item ->
+                if (item.isJsonPrimitive) {
+                    return@mapNotNull item.asStringOrEmpty().takeIf { it.isNotBlank() }
+                }
+                val group = item.asJsonObjectOrNull() ?: return@mapNotNull null
+                val words = group.array("Hwds")
+                    .mapNotNull { wordNode ->
+                        val wordObj = wordNode.asJsonObjectOrNull() ?: return@mapNotNull null
+                        wordObj.string("word")
+                    }
+                    .filter { it.isNotBlank() }
+                if (words.isEmpty()) return@mapNotNull null
+                val pos = group.string("pos")
+                val tran = group.string("tran")
+                val wordsText = words.joinToString(", ")
+                when {
+                    pos.isBlank() && tran.isBlank() -> wordsText
+                    pos.isBlank() -> "$wordsText（$tran）"
+                    tran.isBlank() -> "$pos: $wordsText"
+                    else -> "$pos: $wordsText（$tran）"
+                }
+            }
+            .take(3)
+            .joinToString("；")
+    }
+
+    private fun buildRelWords(entry: JsonObject): String {
+        return entry.array("relWords")
+            .mapNotNull { item ->
+                val group = item.asJsonObjectOrNull() ?: return@mapNotNull null
+                val words = group.array("Hwds")
+                    .mapNotNull { wordNode ->
+                        val wordObj = wordNode.asJsonObjectOrNull() ?: return@mapNotNull null
+                        val hwd = wordObj.string("hwd")
+                        if (hwd.isBlank()) return@mapNotNull null
+                        val tran = wordObj.string("tran")
+                        if (tran.isBlank()) hwd else "$hwd（$tran）"
+                    }
+                    .filter { it.isNotBlank() }
+                if (words.isEmpty()) return@mapNotNull null
+                val pos = group.string("Pos").ifBlank { group.string("pos") }
+                if (pos.isBlank()) words.joinToString(", ") else "$pos: ${words.joinToString(", ")}"
+            }
+            .take(3)
+            .joinToString("；")
+    }
+
+    private fun JsonElement.asJsonObjectOrNull(): JsonObject? {
+        return if (isJsonObject) asJsonObject else null
+    }
+
+    private fun JsonElement.asStringOrEmpty(): String {
+        if (!isJsonPrimitive) return ""
+        return runCatching { asString.trim() }.getOrDefault("")
+    }
+
+    private fun JsonObject.array(key: String): List<JsonElement> {
+        val element = get(key) ?: return emptyList()
+        if (!element.isJsonArray) return emptyList()
+        return element.asJsonArray.toList()
+    }
+
+    private fun JsonObject.string(key: String): String {
+        val element = get(key) ?: return ""
+        if (!element.isJsonPrimitive) return ""
+        return runCatching { element.asString.trim() }.getOrDefault("")
     }
 }

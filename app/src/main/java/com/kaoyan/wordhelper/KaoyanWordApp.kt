@@ -8,6 +8,7 @@ import com.kaoyan.wordhelper.data.repository.ForecastRepository
 import com.kaoyan.wordhelper.data.repository.PronunciationRepository
 import com.kaoyan.wordhelper.data.repository.SettingsRepository
 import com.kaoyan.wordhelper.data.repository.WordRepository
+import com.kaoyan.wordhelper.util.WordbookFullLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,7 +43,10 @@ class KaoyanWordApp : Application() {
     }
 
     val pronunciationRepository: PronunciationRepository by lazy {
-        PronunciationRepository()
+        val pronunciationIndex = WordbookFullLoader
+            .loadPronunciationIndex(this)
+            .getOrDefault(emptyMap())
+        PronunciationRepository(wordbookPronunciations = pronunciationIndex)
     }
 
     override fun onCreate() {
@@ -52,7 +56,10 @@ class KaoyanWordApp : Application() {
             if (algorithmV4Enabled) {
                 repository.repairMasteredStatusForV4()
             }
-            repository.ensurePresetBooks()
+            val presetSeed = WordbookFullLoader.loadPreset(this@KaoyanWordApp).getOrNull()
+            if (presetSeed != null) {
+                repository.ensurePresetBooks(listOf(presetSeed))
+            }
         }
     }
 }

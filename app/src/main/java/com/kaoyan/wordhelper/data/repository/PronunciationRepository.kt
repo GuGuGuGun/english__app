@@ -1,22 +1,44 @@
 package com.kaoyan.wordhelper.data.repository
 
 import com.kaoyan.wordhelper.data.network.FreeDictionaryService
+import com.kaoyan.wordhelper.data.model.PronunciationSource
+import com.kaoyan.wordhelper.util.WordbookPronunciation
 import okhttp3.OkHttpClient
 import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.net.ConnectException
+import java.net.URLEncoder
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
 class PronunciationRepository(
-    private val service: FreeDictionaryService = buildService()
+    private val service: FreeDictionaryService = buildService(),
+    private val wordbookPronunciations: Map<String, WordbookPronunciation> = emptyMap()
 ) {
-    suspend fun getPronunciationAudioUrl(word: String): Result<String> {
+    suspend fun getPronunciationAudioUrl(
+        word: String,
+        preferredSource: PronunciationSource = PronunciationSource.FREE_DICTIONARY
+    ): Result<String> {
         val normalizedWord = word.trim().lowercase()
         if (normalizedWord.isBlank()) {
             return Result.failure(IllegalArgumentException("单词不能为空"))
+        }
+
+        val builtInAudio = wordbookPronunciations[normalizedWord]
+            ?.let { pronunciation ->
+                pronunciation.usSpeech.ifBlank { pronunciation.ukSpeech }
+            }
+            ?.trim()
+            .orEmpty()
+        if (builtInAudio.isNotBlank()) {
+            return Result.success(resolveAudioUrl(builtInAudio))
+        }
+
+        if (preferredSource == PronunciationSource.YOUDAO) {
+            return Result.success(buildYoudaoAudioUrl(normalizedWord))
         }
 
         return try {
@@ -27,17 +49,31 @@ class PronunciationRepository(
                 .firstOrNull { it.isNotBlank() }
 
             if (rawAudioUrl.isNullOrBlank()) {
-                Result.failure(IllegalStateException("未找到可用发音音频"))
+                Result.success(buildYoudaoAudioUrl(normalizedWord))
             } else {
-                val resolvedUrl = if (rawAudioUrl.startsWith("//")) {
-                    "https:$rawAudioUrl"
-                } else {
-                    rawAudioUrl
-                }
+                val resolvedUrl = resolveAudioUrl(rawAudioUrl)
                 Result.success(resolvedUrl)
             }
         } catch (throwable: Throwable) {
-            Result.failure(Exception(mapErrorMessage(throwable), throwable))
+            val youdaoAudio = buildYoudaoAudioUrl(normalizedWord)
+            if (youdaoAudio.isNotBlank()) {
+                Result.success(youdaoAudio)
+            } else {
+                Result.failure(Exception(mapErrorMessage(throwable), throwable))
+            }
+        }
+    }
+
+    private fun buildYoudaoAudioUrl(word: String): String {
+        val encodedWord = URLEncoder.encode(word, StandardCharsets.UTF_8.toString())
+        return "https://dict.youdao.com/dictvoice?audio=$encodedWord&type=2"
+    }
+
+    private fun resolveAudioUrl(rawAudioUrl: String): String {
+        return if (rawAudioUrl.startsWith("//")) {
+            "https:$rawAudioUrl"
+        } else {
+            rawAudioUrl
         }
     }
 

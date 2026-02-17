@@ -98,4 +98,115 @@ class WordFileParserTest {
         assertEquals("abandon", drafts[1].word)
         assertEquals("vt. 放弃", drafts[1].meaning)
     }
+
+    @Test
+    fun parse_jsonWithDataArray_mapsRichFields() {
+        val text = """
+            {
+              "code": 200,
+              "data": [
+                {
+                  "word": "abandon",
+                  "ukphone": "ə'bænd(ə)n",
+                  "usphone": "ə'bændən",
+                  "translations": [
+                    { "pos": "v", "tran_cn": "放弃" },
+                    { "pos": "n", "tran_cn": "放任" }
+                  ],
+                  "sentences": [
+                    { "s_content": "He abandoned the plan.", "s_cn": "他放弃了计划。" }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val drafts = WordFileParser.parse(text)
+
+        assertEquals(1, drafts.size)
+        assertEquals("abandon", drafts[0].word)
+        assertEquals("[ə'bænd(ə)n]", drafts[0].phonetic)
+        assertEquals("v. 放弃；n. 放任", drafts[0].meaning)
+        assertEquals("He abandoned the plan.\n他放弃了计划。", drafts[0].example)
+        assertEquals("", drafts[0].phrases)
+        assertEquals("", drafts[0].synonyms)
+        assertEquals("", drafts[0].relWords)
+    }
+
+    @Test
+    fun parse_jsonWithDataObject_mapsSingleEntry() {
+        val text = """
+            {
+              "data": {
+                "word": "ability",
+                "usphone": "ə'bɪləti",
+                "phrases": [
+                  { "p_content": "to the best of one's ability", "p_cn": "尽某人所能" }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        val drafts = WordFileParser.parse(text)
+
+        assertEquals(1, drafts.size)
+        assertEquals("ability", drafts[0].word)
+        assertEquals("[ə'bɪləti]", drafts[0].phonetic)
+        assertEquals("to the best of one's ability（尽某人所能）", drafts[0].meaning)
+        assertEquals("to the best of one's ability（尽某人所能）", drafts[0].phrases)
+    }
+
+    @Test
+    fun parse_jsonTopLevelArray_mapsEntries() {
+        val text = """
+            [
+              {
+                "word": "absolute",
+                "synonyms": [
+                  {
+                    "pos": "adj",
+                    "tran": "完全的",
+                    "Hwds": [
+                      { "word": "complete" },
+                      { "word": "total" }
+                    ]
+                  }
+                ]
+              }
+            ]
+        """.trimIndent()
+
+        val drafts = WordFileParser.parse(text)
+
+        assertEquals(1, drafts.size)
+        assertEquals("absolute", drafts[0].word)
+        assertEquals("adj: complete, total（完全的）", drafts[0].meaning)
+        assertEquals("adj: complete, total（完全的）", drafts[0].synonyms)
+    }
+
+    @Test
+    fun parse_jsonRelWordsIncludesTran() {
+        val text = """
+            {
+              "data": {
+                "word": "abandon",
+                "relWords": [
+                  {
+                    "Pos": "n",
+                    "Hwds": [
+                      { "hwd": "abandonment", "tran": "抛弃；放纵" }
+                    ]
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        val drafts = WordFileParser.parse(text)
+
+        assertEquals(1, drafts.size)
+        assertEquals("abandon", drafts[0].word)
+        assertEquals("n: abandonment（抛弃；放纵）", drafts[0].meaning)
+        assertEquals("n: abandonment（抛弃；放纵）", drafts[0].relWords)
+    }
 }

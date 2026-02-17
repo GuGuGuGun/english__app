@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.kaoyan.wordhelper.data.model.PronunciationSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -16,6 +17,8 @@ private const val DEFAULT_REVIEW_PRESSURE_DAILY_CAP = 120
 private const val DEFAULT_SWIPE_GESTURE_GUIDE_SHOWN = false
 private const val DEFAULT_ALGORITHM_V4_ENABLED = false
 private const val DEFAULT_PRONUNCIATION_ENABLED = false
+private const val DEFAULT_PRONUNCIATION_SOURCE = 0
+private const val DEFAULT_RECOGNITION_AUTO_PRONOUNCE_ENABLED = false
 private const val DEFAULT_NEW_WORDS_SHUFFLE_ENABLED = false
 private val Context.dataStore by preferencesDataStore(name = "user_settings")
 
@@ -28,6 +31,8 @@ data class UserSettings(
     val swipeGestureGuideShown: Boolean = DEFAULT_SWIPE_GESTURE_GUIDE_SHOWN,
     val algorithmV4Enabled: Boolean = DEFAULT_ALGORITHM_V4_ENABLED,
     val pronunciationEnabled: Boolean = DEFAULT_PRONUNCIATION_ENABLED,
+    val pronunciationSource: PronunciationSource = PronunciationSource.FREE_DICTIONARY,
+    val recognitionAutoPronounceEnabled: Boolean = DEFAULT_RECOGNITION_AUTO_PRONOUNCE_ENABLED,
     val newWordsShuffleEnabled: Boolean = DEFAULT_NEW_WORDS_SHUFFLE_ENABLED
 )
 
@@ -58,6 +63,12 @@ class SettingsRepository(private val context: Context) {
             swipeGestureGuideShown = prefs[KEY_SWIPE_GESTURE_GUIDE_SHOWN] ?: DEFAULT_SWIPE_GESTURE_GUIDE_SHOWN,
             algorithmV4Enabled = prefs[KEY_ALGORITHM_V4_ENABLED] ?: DEFAULT_ALGORITHM_V4_ENABLED,
             pronunciationEnabled = prefs[KEY_PRONUNCIATION_ENABLED] ?: DEFAULT_PRONUNCIATION_ENABLED,
+            pronunciationSource = PronunciationSource.fromValue(
+                prefs[KEY_PRONUNCIATION_SOURCE] ?: DEFAULT_PRONUNCIATION_SOURCE
+            ),
+            recognitionAutoPronounceEnabled =
+                prefs[KEY_RECOGNITION_AUTO_PRONOUNCE_ENABLED]
+                    ?: DEFAULT_RECOGNITION_AUTO_PRONOUNCE_ENABLED,
             newWordsShuffleEnabled =
                 prefs[KEY_NEW_WORDS_SHUFFLE_ENABLED] ?: DEFAULT_NEW_WORDS_SHUFFLE_ENABLED
         )
@@ -95,6 +106,14 @@ class SettingsRepository(private val context: Context) {
         dataStore.edit { prefs -> prefs[KEY_PRONUNCIATION_ENABLED] = enabled }
     }
 
+    suspend fun updatePronunciationSource(source: PronunciationSource) {
+        dataStore.edit { prefs -> prefs[KEY_PRONUNCIATION_SOURCE] = source.value }
+    }
+
+    suspend fun updateRecognitionAutoPronounceEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[KEY_RECOGNITION_AUTO_PRONOUNCE_ENABLED] = enabled }
+    }
+
     suspend fun updateNewWordsShuffleEnabled(enabled: Boolean) {
         dataStore.edit { prefs -> prefs[KEY_NEW_WORDS_SHUFFLE_ENABLED] = enabled }
     }
@@ -110,6 +129,9 @@ class SettingsRepository(private val context: Context) {
         private val KEY_SWIPE_GESTURE_GUIDE_SHOWN = booleanPreferencesKey("swipe_gesture_guide_shown")
         private val KEY_ALGORITHM_V4_ENABLED = booleanPreferencesKey("algorithm_v4_enabled")
         private val KEY_PRONUNCIATION_ENABLED = booleanPreferencesKey("pronunciation_enabled")
+        private val KEY_PRONUNCIATION_SOURCE = intPreferencesKey("pronunciation_source")
+        private val KEY_RECOGNITION_AUTO_PRONOUNCE_ENABLED =
+            booleanPreferencesKey("recognition_auto_pronounce_enabled")
         private val KEY_NEW_WORDS_SHUFFLE_ENABLED = booleanPreferencesKey("new_words_shuffle_enabled")
     }
 }

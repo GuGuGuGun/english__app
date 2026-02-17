@@ -7,6 +7,7 @@ import com.kaoyan.wordhelper.KaoyanWordApp
 import com.kaoyan.wordhelper.data.model.AIConfig
 import com.kaoyan.wordhelper.data.model.AIPresets
 import com.kaoyan.wordhelper.data.model.AIProviderPreset
+import com.kaoyan.wordhelper.data.model.PronunciationSource
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +24,8 @@ data class AILabUiState(
     val algorithmV4Enabled: Boolean = false,
     val newWordsShuffleEnabled: Boolean = false,
     val pronunciationEnabled: Boolean = false,
+    val pronunciationSource: PronunciationSource = PronunciationSource.FREE_DICTIONARY,
+    val recognitionAutoPronounceEnabled: Boolean = false,
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val isTesting: Boolean = false
@@ -61,6 +64,8 @@ class AILabViewModel(application: Application) : AndroidViewModel(application) {
                 algorithmV4Enabled = settings.algorithmV4Enabled,
                 newWordsShuffleEnabled = settings.newWordsShuffleEnabled,
                 pronunciationEnabled = settings.pronunciationEnabled,
+                pronunciationSource = settings.pronunciationSource,
+                recognitionAutoPronounceEnabled = settings.recognitionAutoPronounceEnabled,
                 isLoading = false
             )
         }
@@ -80,6 +85,20 @@ class AILabViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             settingsRepository.updatePronunciationEnabled(enabled)
             _uiState.update { it.copy(pronunciationEnabled = enabled) }
+        }
+    }
+
+    fun updatePronunciationSource(source: PronunciationSource) {
+        viewModelScope.launch {
+            settingsRepository.updatePronunciationSource(source)
+            _uiState.update { it.copy(pronunciationSource = source) }
+        }
+    }
+
+    fun updateRecognitionAutoPronounceEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateRecognitionAutoPronounceEnabled(enabled)
+            _uiState.update { it.copy(recognitionAutoPronounceEnabled = enabled) }
         }
     }
 

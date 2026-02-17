@@ -8,6 +8,7 @@ import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.model.AIContentType
 import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.data.entity.Word
+import com.kaoyan.wordhelper.data.model.PronunciationSource
 import com.kaoyan.wordhelper.data.model.SpellingOutcome
 import com.kaoyan.wordhelper.data.model.StudyRating
 import com.kaoyan.wordhelper.data.repository.AddToNewWordsSource
@@ -15,9 +16,12 @@ import com.kaoyan.wordhelper.util.ImmediateRetryQueuePlanner
 import com.kaoyan.wordhelper.util.RetryRandomSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -68,6 +72,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     private var pendingFailedWordId: Long? = null
     private var answeredInSession = 0
     private var currentWordPresentedAtMs = 0L
+    private var recognitionAutoPronounceEventCounter = 0L
     internal var retryQueueRandomSource: RetryRandomSource = RetryRandomSource.Default
     private val _isSubmitting = MutableStateFlow(false)
     val isSubmitting: StateFlow<Boolean> = _isSubmitting.asStateFlow()
@@ -85,6 +90,8 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     val memoryAidSuggestionWordId: StateFlow<Long?> = _memoryAidSuggestionWordId.asStateFlow()
     private val _swipeSnackbarEvent = MutableStateFlow<SwipeSnackbarEvent?>(null)
     val swipeSnackbarEvent: StateFlow<SwipeSnackbarEvent?> = _swipeSnackbarEvent.asStateFlow()
+    private val _recognitionAutoPronounceEvents = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val recognitionAutoPronounceEvents: SharedFlow<Long> = _recognitionAutoPronounceEvents.asSharedFlow()
 
     val showSwipeGuide: StateFlow<Boolean> = settingsRepository.settingsFlow
         .map { !it.swipeGestureGuideShown }
@@ -145,6 +152,16 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 120)
     val pronunciationEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
         .map { it.pronunciationEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    val pronunciationSource: StateFlow<PronunciationSource> = settingsRepository.settingsFlow
+        .map { it.pronunciationSource }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            PronunciationSource.FREE_DICTIONARY
+        )
+    val recognitionAutoPronounceEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
+        .map { it.recognitionAutoPronounceEnabled }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     private val shuffleNewWordsEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
         .map { it.newWordsShuffleEnabled }
@@ -227,6 +244,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     fun submitAnswer(rating: StudyRating) {
         val word = _currentWord.value ?: return
         val book = activeBook.value ?: return
+        val previousWordId = word.id
         val responseTimeMs = buildCurrentResponseTimeMs()
         val effectiveRating = resolveRecognitionRating(rating, responseTimeMs)
         launchSubmit {
@@ -249,12 +267,14 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 markAnswered()
             }
             loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            emitRecognitionAutoPronounceEventIfNeeded(previousWordId)
         }
     }
 
     fun submitAnswerAndRemoveFromNewWords(rating: StudyRating) {
         val word = _currentWord.value ?: return
         val book = activeBook.value ?: return
+        val previousWordId = word.id
         val responseTimeMs = buildCurrentResponseTimeMs()
         val effectiveRating = resolveRecognitionRating(rating, responseTimeMs)
         launchSubmit {
@@ -273,6 +293,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             }
             markAnswered()
             loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            emitRecognitionAutoPronounceEventIfNeeded(previousWordId)
         }
     }
 
@@ -387,9 +408,9 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             pendingTooEasyUndo.remove(undoToken)
             answeredInSession = (answeredInSession - 1).coerceAtLeast(0)
             val book = activeBook.value
-                if (book != null) {
-                    loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
-                }
+            if (book != null) {
+                loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            }
             emitSwipeSnackbar("已撤销“太简单”")
         }
     }
@@ -641,6 +662,13 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
 
     private fun markAnswered() {
         answeredInSession += 1
+    }
+
+    private fun emitRecognitionAutoPronounceEventIfNeeded(previousWordId: Long) {
+        val nextWordId = _currentWord.value?.id ?: return
+        if (nextWordId == previousWordId) return
+        recognitionAutoPronounceEventCounter += 1
+        _recognitionAutoPronounceEvents.tryEmit(recognitionAutoPronounceEventCounter)
     }
 
     private fun buildCurrentResponseTimeMs(now: Long = System.currentTimeMillis()): Long {

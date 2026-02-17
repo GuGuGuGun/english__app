@@ -8,6 +8,7 @@ import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.data.entity.Word
 import com.kaoyan.wordhelper.data.model.AIContentType
+import com.kaoyan.wordhelper.data.model.PronunciationSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -83,6 +84,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     val pronunciationEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
         .map { it.pronunciationEnabled }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    val pronunciationSource: StateFlow<PronunciationSource> = settingsRepository.settingsFlow
+        .map { it.pronunciationSource }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            PronunciationSource.FREE_DICTIONARY
+        )
     private var lastAnalyzedSentence: String? = null
 
     private val activeBookFlow: Flow<Book?> = repository.getActiveBookFlow()

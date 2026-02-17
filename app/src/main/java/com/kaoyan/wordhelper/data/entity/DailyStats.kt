@@ -24,5 +24,9 @@ data class DailyStats(
     @ColumnInfo(name = "gesture_easy_count")
     val gestureEasyCount: Int = 0,
     @ColumnInfo(name = "gesture_notebook_count")
-    val gestureNotebookCount: Int = 0
+    val gestureNotebookCount: Int = 0,
+    @ColumnInfo(name = "fuzzy_words_count")
+    val fuzzyWordsCount: Int = 0,
+    @ColumnInfo(name = "recognized_words_count")
+    val recognizedWordsCount: Int = 0
 )

@@ -75,6 +75,11 @@ data class GestureStatsSummary(
     val gestureNotebookCount: Int = 0
 )
 
+data class TodayRecognitionSummary(
+    val fuzzyCount: Int = 0,
+    val recognizedCount: Int = 0
+)
+
 private data class ForecastUiBundle(
     val forecast: List<ForecastDayUi>,
     val selectedDate: LocalDate?,
@@ -89,6 +94,8 @@ data class StatsUiState(
     val heatmap: List<HeatmapCell> = emptyList(),
     val gestureEasyCount: Int = 0,
     val gestureNotebookCount: Int = 0,
+    val todayFuzzyCount: Int = 0,
+    val todayRecognizedCount: Int = 0,
     val calendarMode: CalendarMode = CalendarMode.HISTORY,
     val forecast: List<ForecastDayUi> = emptyList(),
     val selectedForecastDate: LocalDate? = null,
@@ -156,6 +163,17 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    private val todayRecognitionFlow = repository.getDailyStatsAggregated(
+        LocalDate.now(zoneId),
+        LocalDate.now(zoneId)
+    ).map { aggregates ->
+        val todayAggregate = aggregates.firstOrNull()
+        TodayRecognitionSummary(
+            fuzzyCount = todayAggregate?.fuzzyWordsCount ?: 0,
+            recognizedCount = todayAggregate?.recognizedWordsCount ?: 0
+        )
+    }
+
     private val baseUiFlow = combine(
         rangeFlow,
         lineDataFlow,
@@ -170,6 +188,11 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
             heatmap = heatmap,
             gestureEasyCount = gestureStats.gestureEasyCount,
             gestureNotebookCount = gestureStats.gestureNotebookCount
+        )
+    }.combine(todayRecognitionFlow) { base, todayRecognition ->
+        base.copy(
+            todayFuzzyCount = todayRecognition.fuzzyCount,
+            todayRecognizedCount = todayRecognition.recognizedCount
         )
     }
 

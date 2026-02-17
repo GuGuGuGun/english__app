@@ -18,6 +18,9 @@ interface WordDao {
                   w.phonetic AS phonetic,
                   c.meaning AS meaning,
                   c.example AS example,
+                  c.phrases AS phrases,
+                  c.synonyms AS synonyms,
+                  c.rel_words AS relWords,
                   c.book_id AS bookId
            FROM tb_book_word_content c
            INNER JOIN tb_word w ON c.word_id = w.id
@@ -32,6 +35,9 @@ interface WordDao {
                   w.phonetic AS phonetic,
                   c.meaning AS meaning,
                   c.example AS example,
+                  c.phrases AS phrases,
+                  c.synonyms AS synonyms,
+                  c.rel_words AS relWords,
                   c.book_id AS bookId
            FROM tb_book_word_content c
            INNER JOIN tb_word w ON c.word_id = w.id
@@ -46,6 +52,9 @@ interface WordDao {
                   w.phonetic AS phonetic,
                   IFNULL(c.meaning, '') AS meaning,
                   IFNULL(c.example, '') AS example,
+                  IFNULL(c.phrases, '') AS phrases,
+                  IFNULL(c.synonyms, '') AS synonyms,
+                  IFNULL(c.rel_words, '') AS relWords,
                   IFNULL(c.book_id, 0) AS bookId
            FROM tb_word w
            LEFT JOIN tb_book_word_content c ON c.id = (
@@ -68,14 +77,26 @@ interface WordDao {
                       WHEN :bookId > 0 THEN IFNULL(c_current.meaning, '')
                       ELSE IFNULL(c_any.meaning, '')
                   END AS meaning,
-                  CASE
-                      WHEN :bookId > 0 THEN IFNULL(c_current.example, '')
-                      ELSE IFNULL(c_any.example, '')
-                  END AS example,
-                  CASE
-                      WHEN :bookId > 0 THEN :bookId
-                      ELSE IFNULL(c_any.book_id, 0)
-                  END AS bookId
+                   CASE
+                       WHEN :bookId > 0 THEN IFNULL(c_current.example, '')
+                       ELSE IFNULL(c_any.example, '')
+                   END AS example,
+                   CASE
+                       WHEN :bookId > 0 THEN IFNULL(c_current.phrases, '')
+                       ELSE IFNULL(c_any.phrases, '')
+                   END AS phrases,
+                   CASE
+                       WHEN :bookId > 0 THEN IFNULL(c_current.synonyms, '')
+                       ELSE IFNULL(c_any.synonyms, '')
+                   END AS synonyms,
+                   CASE
+                       WHEN :bookId > 0 THEN IFNULL(c_current.rel_words, '')
+                       ELSE IFNULL(c_any.rel_words, '')
+                   END AS relWords,
+                   CASE
+                       WHEN :bookId > 0 THEN :bookId
+                       ELSE IFNULL(c_any.book_id, 0)
+                   END AS bookId
            FROM tb_word w
            LEFT JOIN tb_book_word_content c_current
                ON c_current.word_id = w.id AND c_current.book_id = :bookId
@@ -141,6 +162,9 @@ interface WordDao {
                   w.phonetic AS phonetic,
                   IFNULL(c.meaning, '') AS meaning,
                   IFNULL(c.example, '') AS example,
+                  IFNULL(c.phrases, '') AS phrases,
+                  IFNULL(c.synonyms, '') AS synonyms,
+                  IFNULL(c.rel_words, '') AS relWords,
                   IFNULL(c.book_id, 0) AS bookId
            FROM tb_new_word_ref n
            INNER JOIN tb_word w ON w.id = n.word_id
@@ -161,6 +185,9 @@ interface WordDao {
                   w.phonetic AS phonetic,
                   c.meaning AS meaning,
                   c.example AS example,
+                  c.phrases AS phrases,
+                  c.synonyms AS synonyms,
+                  c.rel_words AS relWords,
                   c.book_id AS bookId
            FROM tb_book_word_content c
            INNER JOIN tb_word w ON c.word_id = w.id

@@ -30,7 +30,7 @@ class AIRepository internal constructor(
     private val cacheDao: AICacheDao,
     private val loadConfig: suspend () -> AIConfig,
     private val serviceFactory: (String) -> AIService,
-    @VisibleForTesting internal val nowProvider: () -> Long = { System.currentTimeMillis() }
+    @get:VisibleForTesting internal val nowProvider: () -> Long = { System.currentTimeMillis() }
 ) {
     private val serviceCache = ConcurrentHashMap<String, AIService>()
 

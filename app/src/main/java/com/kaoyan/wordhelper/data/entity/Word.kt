@@ -6,5 +6,8 @@ data class Word(
     val phonetic: String = "",
     val meaning: String = "",
     val example: String = "",
+    val phrases: String = "",
+    val synonyms: String = "",
+    val relWords: String = "",
     val bookId: Long
 )

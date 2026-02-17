@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kaoyan.wordhelper.data.model.AIPresets
+import com.kaoyan.wordhelper.data.model.PronunciationSource
 import com.kaoyan.wordhelper.ui.viewmodel.AILabViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -362,18 +363,59 @@ fun AILabScreen(
                                 modifier = Modifier.testTag("lab_pronunciation_switch")
                             )
                         }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            PronunciationSource.entries.forEach { source ->
+                                FilterChip(
+                                    selected = uiState.pronunciationSource == source,
+                                    onClick = { viewModel.updatePronunciationSource(source) },
+                                    label = { Text(text = source.label) },
+                                    enabled = uiState.pronunciationEnabled,
+                                    modifier = Modifier.testTag("lab_pronunciation_source_${source.name.lowercase()}")
+                                )
+                            }
+                        }
                         Text(
-                            text = "当前使用 Free Dictionary API（dictionaryapi.dev）获取英文单词发音音频，属于实验性功能。",
+                            text = when (uiState.pronunciationSource) {
+                                PronunciationSource.FREE_DICTIONARY ->
+                                    "优先来源：Free Dictionary（查询失败会自动回退 Youdao）。"
+                                PronunciationSource.YOUDAO ->
+                                    "优先来源：Youdao（dict.youdao.com）。"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "说明：仅在开关开启时，学习页和查词详情中的发音按钮才显示。",
+                            text = "说明：仅在开关开启时，学习页和查词详情中的发音按钮才显示；内置词库音频始终优先使用。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "认词自动发音", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = "认词模式每次切到新单词时自动播放发音",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.recognitionAutoPronounceEnabled,
+                                onCheckedChange = viewModel::updateRecognitionAutoPronounceEnabled,
+                                enabled = uiState.pronunciationEnabled,
+                                modifier = Modifier.testTag("lab_pronunciation_auto_recognition_switch")
+                            )
+                        }
                         Text(
-                            text = "补充：发音资源由公开词典提供，个别词可能无音频或网络波动导致播放失败。",
+                            text = "补充：发音资源来自公开接口，个别词可能无音频或网络波动导致播放失败。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

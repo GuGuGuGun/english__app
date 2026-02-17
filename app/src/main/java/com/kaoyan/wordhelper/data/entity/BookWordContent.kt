@@ -36,5 +36,9 @@ data class BookWordContent(
     @ColumnInfo(name = "book_id")
     val bookId: Long,
     val meaning: String = "",
-    val example: String = ""
+    val example: String = "",
+    val phrases: String = "",
+    val synonyms: String = "",
+    @ColumnInfo(name = "rel_words")
+    val relWords: String = ""
 )

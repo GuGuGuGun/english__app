@@ -16,7 +16,7 @@ import org.junit.runner.RunWith
 class MigrationTest {
 
     @Test
-    fun migrate1To8_preservesProgressData() {
+    fun migrate1To10_preservesProgressData() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.deleteDatabase(TEST_DB)
         createVersion1Database(context)
@@ -29,7 +29,9 @@ class MigrationTest {
                 AppDatabase.MIGRATION_4_5,
                 AppDatabase.MIGRATION_5_6,
                 AppDatabase.MIGRATION_6_7,
-                AppDatabase.MIGRATION_7_8
+                AppDatabase.MIGRATION_7_8,
+                AppDatabase.MIGRATION_8_9,
+                AppDatabase.MIGRATION_9_10
             )
             .build()
 
@@ -111,14 +113,20 @@ class MigrationTest {
         migratedDb.query("PRAGMA table_info('tb_daily_stats')").use { cursor ->
             var hasGestureEasy = false
             var hasGestureNotebook = false
+            var hasFuzzyWords = false
+            var hasRecognizedWords = false
             while (cursor.moveToNext()) {
                 when (cursor.getString(1)) {
                     "gesture_easy_count" -> hasGestureEasy = true
                     "gesture_notebook_count" -> hasGestureNotebook = true
+                    "fuzzy_words_count" -> hasFuzzyWords = true
+                    "recognized_words_count" -> hasRecognizedWords = true
                 }
             }
             assertTrue(hasGestureEasy)
             assertTrue(hasGestureNotebook)
+            assertTrue(hasFuzzyWords)
+            assertTrue(hasRecognizedWords)
         }
 
         migratedDb.query("SELECT word, word_key, phonetic FROM tb_word WHERE id = 1").use { cursor ->
@@ -140,6 +148,22 @@ class MigrationTest {
             assertEquals(1, cursor.getInt(1))
             assertEquals("", cursor.getString(2))
             assertEquals("", cursor.getString(3))
+        }
+
+        migratedDb.query("PRAGMA table_info('tb_book_word_content')").use { cursor ->
+            var hasPhrases = false
+            var hasSynonyms = false
+            var hasRelWords = false
+            while (cursor.moveToNext()) {
+                when (cursor.getString(1)) {
+                    "phrases" -> hasPhrases = true
+                    "synonyms" -> hasSynonyms = true
+                    "rel_words" -> hasRelWords = true
+                }
+            }
+            assertTrue(hasPhrases)
+            assertTrue(hasSynonyms)
+            assertTrue(hasRelWords)
         }
 
         roomDb.close()

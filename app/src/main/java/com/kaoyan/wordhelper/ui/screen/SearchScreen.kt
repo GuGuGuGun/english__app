@@ -81,6 +81,7 @@ fun SearchScreen(viewModel: SearchViewModel = viewModel()) {
     val sentenceAiState by viewModel.sentenceAiState.collectAsStateWithLifecycle()
     val wordAiState by viewModel.wordAiState.collectAsStateWithLifecycle()
     val pronunciationEnabled by viewModel.pronunciationEnabled.collectAsStateWithLifecycle()
+    val pronunciationSource by viewModel.pronunciationSource.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     val pronunciationRepository = remember(context) {
         (context.applicationContext as KaoyanWordApp).pronunciationRepository
@@ -98,7 +99,10 @@ fun SearchScreen(viewModel: SearchViewModel = viewModel()) {
         pronouncingWordId = wordId
         uiScope.launch {
             val result = withContext(Dispatchers.IO) {
-                pronunciationRepository.getPronunciationAudioUrl(wordText)
+                pronunciationRepository.getPronunciationAudioUrl(
+                    word = wordText,
+                    preferredSource = pronunciationSource
+                )
             }
             result.onSuccess { audioUrl ->
                 pronunciationPlayer.play(
@@ -344,7 +348,7 @@ fun SearchSentenceAnalysisPanel(
                         testTag = "search_sentence_grammar"
                     )
                     SentenceAnalysisSectionCard(
-                        title = "中文翻译",
+                        title = "AI 中文翻译",
                         content = state.analysis.chineseTranslation,
                         testTag = "search_sentence_translation"
                     )
@@ -417,14 +421,14 @@ private fun SearchResultItem(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .animateContentSize(animationSpec = tween(220)),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {

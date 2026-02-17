@@ -13,6 +13,7 @@ import com.kaoyan.wordhelper.data.entity.Word
 import com.kaoyan.wordhelper.data.entity.WordEntity
 import com.kaoyan.wordhelper.data.model.DailyStatsAggregate
 import com.kaoyan.wordhelper.data.model.PresetBookCatalog
+import com.kaoyan.wordhelper.data.model.PresetBookSeed
 import com.kaoyan.wordhelper.data.model.SpellingOutcome
 import com.kaoyan.wordhelper.data.model.StudyRating
 import com.kaoyan.wordhelper.data.model.WordDraft
@@ -89,7 +90,7 @@ class WordRepository(private val database: AppDatabase) {
         }
     }
 
-    suspend fun ensurePresetBooks() {
+    suspend fun ensurePresetBooks(presetSeeds: List<PresetBookSeed> = PresetBookCatalog.presets) {
         database.withTransaction {
             val books = bookDao.getAllBooksList().toMutableList()
             if (books.none { it.type == Book.TYPE_NEW_WORDS }) {
@@ -104,7 +105,7 @@ class WordRepository(private val database: AppDatabase) {
                 bookDao.getBookById(newWordsId)?.let { books.add(it) }
             }
 
-            val presetNames = PresetBookCatalog.presets.map { it.name }.toSet()
+            val presetNames = presetSeeds.map { it.name }.toSet()
             val stalePresets = books.filter { it.type == Book.TYPE_PRESET && it.name !in presetNames }
             if (stalePresets.isNotEmpty()) {
                 stalePresets.forEach { preset ->
@@ -140,7 +141,7 @@ class WordRepository(private val database: AppDatabase) {
             }
 
             var hasActiveBook = books.any { it.isActive }
-            PresetBookCatalog.presets.forEachIndexed { index, preset ->
+            presetSeeds.forEachIndexed { index, preset ->
                 val existing = books.firstOrNull { it.type == Book.TYPE_PRESET && it.name == preset.name }
                     ?: bookDao.findByNameAndType(preset.name, Book.TYPE_PRESET)
                 val targetBook = if (existing == null) {
@@ -211,7 +212,10 @@ class WordRepository(private val database: AppDatabase) {
                     word = word.word,
                     phonetic = word.phonetic,
                     meaning = word.meaning,
-                    example = word.example
+                    example = word.example,
+                    phrases = word.phrases,
+                    synonyms = word.synonyms,
+                    relWords = word.relWords
                 )
             }
             upsertDraftsForBook(bookId, drafts)
@@ -366,7 +370,9 @@ class WordRepository(private val database: AppDatabase) {
             }
             updateDailyStatsInternal(
                 newWordsDelta = if (isNewLearningCompletion) 1 else 0,
-                reviewWordsDelta = if (isReviewCompletion) 1 else 0
+                reviewWordsDelta = if (isReviewCompletion) 1 else 0,
+                fuzzyWordsDelta = if (rating == StudyRating.HARD) 1 else 0,
+                recognizedWordsDelta = if (rating == StudyRating.GOOD) 1 else 0
             )
             invalidateForecastCacheInternal()
         }
@@ -752,7 +758,10 @@ class WordRepository(private val database: AppDatabase) {
                     wordId = wordId,
                     bookId = bookId,
                     meaning = draft.meaning,
-                    example = draft.example
+                    example = draft.example,
+                    phrases = draft.phrases,
+                    synonyms = draft.synonyms,
+                    relWords = draft.relWords
                 )
             )
         }
@@ -837,7 +846,9 @@ class WordRepository(private val database: AppDatabase) {
         spellPracticeDelta: Int = 0,
         durationMillisDelta: Long = 0L,
         gestureEasyDelta: Int = 0,
-        gestureNotebookDelta: Int = 0
+        gestureNotebookDelta: Int = 0,
+        fuzzyWordsDelta: Int = 0,
+        recognizedWordsDelta: Int = 0
     ) {
         val today = currentLearningDate().format(DATE_FORMATTER)
         val existing = dailyStatsDao.getOrCreate(today)
@@ -847,7 +858,9 @@ class WordRepository(private val database: AppDatabase) {
             spellPracticeCount = (existing.spellPracticeCount + spellPracticeDelta).coerceAtLeast(0),
             durationMillis = (existing.durationMillis + durationMillisDelta).coerceAtLeast(0L),
             gestureEasyCount = (existing.gestureEasyCount + gestureEasyDelta).coerceAtLeast(0),
-            gestureNotebookCount = (existing.gestureNotebookCount + gestureNotebookDelta).coerceAtLeast(0)
+            gestureNotebookCount = (existing.gestureNotebookCount + gestureNotebookDelta).coerceAtLeast(0),
+            fuzzyWordsCount = (existing.fuzzyWordsCount + fuzzyWordsDelta).coerceAtLeast(0),
+            recognizedWordsCount = (existing.recognizedWordsCount + recognizedWordsDelta).coerceAtLeast(0)
         )
         dailyStatsDao.update(updated)
     }

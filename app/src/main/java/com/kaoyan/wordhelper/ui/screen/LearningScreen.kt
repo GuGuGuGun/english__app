@@ -35,12 +35,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.AlertDialog
@@ -54,7 +51,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -66,7 +62,6 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -95,7 +90,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kaoyan.wordhelper.KaoyanWordApp
 import com.kaoyan.wordhelper.R
 import com.kaoyan.wordhelper.data.entity.Word
-import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.model.AIContentType
 import com.kaoyan.wordhelper.data.model.StudyRating
 import com.kaoyan.wordhelper.ui.component.AIGeneratedBadge
@@ -126,7 +120,6 @@ fun LearningScreen(
     onModeChange: (LearningMode) -> Unit = {}
 ) {
     val activeBook by viewModel.activeBook.collectAsStateWithLifecycle()
-    val books by viewModel.books.collectAsStateWithLifecycle()
     val currentWord by viewModel.currentWord.collectAsStateWithLifecycle()
     val currentIndex by viewModel.currentIndex.collectAsStateWithLifecycle()
     val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
@@ -139,6 +132,8 @@ fun LearningScreen(
     val reviewPressureDailyCap by viewModel.reviewPressureDailyCap.collectAsStateWithLifecycle()
     val algorithmV4Enabled by viewModel.algorithmV4Enabled.collectAsStateWithLifecycle()
     val pronunciationEnabled by viewModel.pronunciationEnabled.collectAsStateWithLifecycle()
+    val pronunciationSource by viewModel.pronunciationSource.collectAsStateWithLifecycle()
+    val recognitionAutoPronounceEnabled by viewModel.recognitionAutoPronounceEnabled.collectAsStateWithLifecycle()
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
     val cachedExampleContent by viewModel.cachedExampleContent.collectAsStateWithLifecycle()
     val cachedMemoryAidContent by viewModel.cachedMemoryAidContent.collectAsStateWithLifecycle()
@@ -154,7 +149,6 @@ fun LearningScreen(
     val uiScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var showSheet by remember { mutableStateOf(false) }
     var showRemoveDialog by remember { mutableStateOf(false) }
     var showReviewDialog by remember { mutableStateOf(false) }
     var showAiAssistantPage by rememberSaveable { mutableStateOf(false) }
@@ -258,7 +252,10 @@ fun LearningScreen(
         pronouncingWordId = word.id
         uiScope.launch {
             val result = withContext(Dispatchers.IO) {
-                pronunciationRepository.getPronunciationAudioUrl(word.word)
+                pronunciationRepository.getPronunciationAudioUrl(
+                    word = word.word,
+                    preferredSource = pronunciationSource
+                )
             }
             result.onSuccess { audioUrl ->
                 pronunciationPlayer.play(
@@ -274,24 +271,12 @@ fun LearningScreen(
         }
     }
 
-    if (showSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(onDismissRequest = { showSheet = false }, sheetState = sheetState) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "切换词书", style = MaterialTheme.typography.titleLarge)
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(books, key = { it.id }) { book ->
-                        BookSheetItem(
-                            book = book,
-                            isActive = book.id == activeBook?.id,
-                            onSwitch = {
-                                viewModel.switchBook(book.id)
-                                showSheet = false
-                            }
-                        )
-                    }
-                }
-            }
+    LaunchedEffect(Unit) {
+        viewModel.recognitionAutoPronounceEvents.collect {
+            val word = viewModel.currentWord.value ?: return@collect
+            if (learningMode != LearningMode.RECOGNITION) return@collect
+            if (!pronunciationEnabled || !recognitionAutoPronounceEnabled) return@collect
+            playPronunciation(word)
         }
     }
 
@@ -434,43 +419,9 @@ fun LearningScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            modifier = Modifier.clickable { showSheet = true },
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                AnimatedContent(
-                                    targetState = activeBook?.name ?: "暂无词书",
-                                    transitionSpec = {
-                                        fadeIn(animationSpec = tween(180)) togetherWith fadeOut(animationSpec = tween(180))
-                                    },
-                                    label = "activeBookName"
-                                ) { title ->
-                                    Text(
-                                        text = title,
-                                        style = MaterialTheme.typography.labelLarge,
-                                        modifier = Modifier.testTag("learning_book_title")
-                                    )
-                                }
-                                Icon(imageVector = Icons.Filled.KeyboardArrowDown, contentDescription = null)
-                            }
-                        }
-
-                    }
-
                     TabRow(
                         selectedTabIndex = learningMode.ordinal,
                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
@@ -552,7 +503,6 @@ fun LearningScreen(
                                 .weight(1f),
                             verticalArrangement = Arrangement.spacedBy(RECOGNITION_SECTION_SPACING)
                         ) {
-                            RecognitionHintBanner()
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -664,7 +614,7 @@ fun LearningScreen(
 
 private const val SM2_DESCRIPTION =
     "SM-2 调度说明：不认识会在会话内重试，模糊保守推进，认识按记忆因子增长间隔。"
-private val RECOGNITION_SECTION_SPACING = 14.dp
+private val RECOGNITION_SECTION_SPACING = 10.dp
 private const val SWIPE_TRIGGER_RATIO = 0.3f
 private const val SWIPE_ACTIVE_ZONE_RATIO = 0.8f
 
@@ -932,26 +882,6 @@ private fun BottomLearningProgressBar(
                 .height(6.dp),
             color = MaterialTheme.colorScheme.primary,
             trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-        )
-    }
-}
-
-@Composable
-private fun RecognitionHintBanner(modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-        ),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-    ) {
-        Text(
-            text = "先判断是否认识，再翻卡核对释义；左滑标记太简单，右滑快速入生词本。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
         )
     }
 }
@@ -1467,7 +1397,7 @@ private fun RecognitionActionPanel(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(18.dp),
         border = androidx.compose.foundation.BorderStroke(
             width = 1.dp,
             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)
@@ -1477,7 +1407,7 @@ private fun RecognitionActionPanel(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(10.dp),
+                .padding(8.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             FilledTonalButton(
@@ -1569,8 +1499,10 @@ private fun WordCard(
         normalizedWordLength <= 48 -> 3
         else -> 4
     }
+    val backContentScrollState = rememberScrollState()
     LaunchedEffect(word.id) {
         onFlipChanged(false)
+        backContentScrollState.scrollTo(0)
     }
     val density = LocalDensity.current
     val rotation by animateFloatAsState(
@@ -1612,7 +1544,7 @@ private fun WordCard(
                 .fillMaxHeight()
                 .background(if (showFront) frontBrush else backBrush)
                 .padding(horizontal = 20.dp, vertical = 20.dp)
-                .heightIn(min = 220.dp)
+                .heightIn(min = 260.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1653,7 +1585,7 @@ private fun WordCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.TopCenter
             ) {
                 Box(
                     modifier = Modifier
@@ -1662,15 +1594,15 @@ private fun WordCard(
                             rotationY = rotation
                             cameraDistance = 12f * density.density
                         },
-                    contentAlignment = Alignment.Center
+                    contentAlignment = Alignment.TopCenter
                 ) {
                     if (showFront) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 14.dp),
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)
+                            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Top)
                         ) {
                             Text(
                                 text = displayWord,
@@ -1704,16 +1636,15 @@ private fun WordCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 4.dp, vertical = 12.dp)
-                                .graphicsLayer { rotationY = 180f },
+                                .graphicsLayer { rotationY = 180f }
+                                .verticalScroll(backContentScrollState),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Text(
                                 text = displayWord,
                                 style = backWordStyle,
                                 fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.fillMaxWidth(),
-                                maxLines = wordMaxLines,
-                                overflow = TextOverflow.Clip
+                                modifier = Modifier.fillMaxWidth()
                             )
                             if (word.phonetic.isNotBlank()) {
                                 Text(
@@ -1732,9 +1663,7 @@ private fun WordCard(
                                 Text(
                                     text = word.meaning,
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 5,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                             if (word.example.isNotBlank()) {
@@ -1743,15 +1672,16 @@ private fun WordCard(
                                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                                 ) {
                                     Text(
-                                        text = "例句  ${word.example}",
+                                        text = "例句\n${word.example}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                        maxLines = 4,
-                                        overflow = TextOverflow.Ellipsis
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
                                     )
                                 }
                             }
+                            WordExtraSection(title = "短语", content = word.phrases)
+                            WordExtraSection(title = "近义词", content = word.synonyms)
+                            WordExtraSection(title = "同根词", content = word.relWords)
                         }
                     }
                 }
@@ -1785,6 +1715,36 @@ private fun WordCard(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun WordExtraSection(
+    title: String,
+    content: String,
+    modifier: Modifier = Modifier
+) {
+    if (content.isBlank()) return
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = content,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }
@@ -1892,34 +1852,4 @@ private fun AnimatedContentTransitionScope<WordCardState>.wordCardTransition(
         }
     }.using(SizeTransform(clip = false))
 }
-
-@Composable
-private fun BookSheetItem(
-    book: Book,
-    isActive: Boolean,
-    onSwitch: () -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = book.name, style = MaterialTheme.typography.bodyLarge)
-            Text(text = "共 ${book.totalCount} 词", style = MaterialTheme.typography.bodySmall)
-        }
-        Spacer(modifier = Modifier.size(8.dp))
-        if (isActive) {
-            Text(text = "使用中", style = MaterialTheme.typography.bodySmall)
-        } else {
-            OutlinedButton(onClick = onSwitch) {
-                Text(text = "切换")
-            }
-        }
-    }
-}
-
-
-
-
 

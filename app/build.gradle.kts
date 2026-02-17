@@ -41,6 +41,21 @@ android {
         compose = true
         buildConfig = true
     }
+
+    sourceSets {
+        getByName("main") {
+            assets.srcDir(layout.buildDirectory.dir("generated/assets/main"))
+        }
+    }
+}
+
+val syncWordbookFullAsset by tasks.registering(Copy::class) {
+    from(rootProject.file("wordbook_full.json"))
+    into(layout.buildDirectory.dir("generated/assets/main"))
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(syncWordbookFullAsset)
 }
 
 dependencies {

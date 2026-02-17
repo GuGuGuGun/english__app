@@ -128,6 +128,8 @@ fun StatsContent(
                 selectedForecastWords = uiState.selectedForecastWords,
                 gestureEasyCount = uiState.gestureEasyCount,
                 gestureNotebookCount = uiState.gestureNotebookCount,
+                todayFuzzyCount = uiState.todayFuzzyCount,
+                todayRecognizedCount = uiState.todayRecognizedCount,
                 forecastLoadLabel = uiState.forecastLoadLabel,
                 onModeSelect = onCalendarModeSelect,
                 onForecastDateSelect = onForecastDateSelect,
@@ -158,6 +160,8 @@ private fun LearningCalendar(
     selectedForecastWords: List<ForecastWordPreview>,
     gestureEasyCount: Int,
     gestureNotebookCount: Int,
+    todayFuzzyCount: Int,
+    todayRecognizedCount: Int,
     forecastLoadLabel: String,
     onModeSelect: (CalendarMode) -> Unit,
     onForecastDateSelect: (LocalDate) -> Unit,
@@ -187,6 +191,12 @@ private fun LearningCalendar(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag("stats_gesture_summary")
+            )
+            Text(
+                text = "今日认词：模糊 $todayFuzzyCount · 认识 $todayRecognizedCount",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("stats_today_recognition")
             )
 
             if (mode == CalendarMode.HISTORY) {
