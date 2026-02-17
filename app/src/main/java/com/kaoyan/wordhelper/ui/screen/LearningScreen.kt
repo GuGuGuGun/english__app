@@ -972,6 +972,7 @@ private fun RecognitionAiAssistantPage(
     var exampleContent by remember(word.id) { mutableStateOf(cachedExampleContent) }
     var memoryAidContent by remember(word.id) { mutableStateOf(cachedMemoryAidContent) }
     val scrollState = rememberScrollState()
+    val displayWord = remember(word.word) { word.word.adaptiveWordText() }
 
     LaunchedEffect(cachedExampleContent) {
         if (cachedExampleContent.isNotBlank()) {
@@ -1040,9 +1041,15 @@ private fun RecognitionAiAssistantPage(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "当前单词：${word.word}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium
+                        text = "当前单词",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = displayWord,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.fillMaxWidth()
                     )
                     Text(
                         text = "例句和助记会在本页展示，生成内容仅供学习参考。",
@@ -1536,18 +1543,28 @@ private fun WordCard(
 ) {
     var isFlipped by remember(word.id) { mutableStateOf(false) }
     val normalizedWordLength = word.word.trim().length
+    val displayWord = remember(word.word) { word.word.adaptiveWordText() }
     val typography = MaterialTheme.typography
     val frontWordStyle = when {
         normalizedWordLength <= 12 -> typography.displayLarge
         normalizedWordLength <= 16 -> typography.displayMedium
         normalizedWordLength <= 20 -> typography.headlineLarge
         normalizedWordLength <= 24 -> typography.headlineMedium
-        else -> typography.titleLarge
+        normalizedWordLength <= 32 -> typography.titleLarge
+        normalizedWordLength <= 40 -> typography.titleMedium
+        else -> typography.titleSmall
     }
     val backWordStyle = when {
         normalizedWordLength <= 16 -> typography.titleLarge
         normalizedWordLength <= 24 -> typography.titleMedium
-        else -> typography.titleSmall
+        normalizedWordLength <= 32 -> typography.titleSmall
+        else -> typography.bodyLarge
+    }
+    val wordMaxLines = when {
+        normalizedWordLength <= 20 -> 1
+        normalizedWordLength <= 32 -> 2
+        normalizedWordLength <= 48 -> 3
+        else -> 4
     }
     LaunchedEffect(word.id) {
         onFlipChanged(false)
@@ -1653,10 +1670,12 @@ private fun WordCard(
                             verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)
                         ) {
                             Text(
-                                text = word.word,
+                                text = displayWord,
                                 style = frontWordStyle,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center,
+                                maxLines = wordMaxLines,
+                                overflow = TextOverflow.Clip
                             )
                             if (word.phonetic.isNotBlank()) {
                                 Surface(
@@ -1686,11 +1705,12 @@ private fun WordCard(
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Text(
-                                text = word.word,
+                                text = displayWord,
                                 style = backWordStyle,
                                 fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                modifier = Modifier.fillMaxWidth(),
+                                maxLines = wordMaxLines,
+                                overflow = TextOverflow.Clip
                             )
                             if (word.phonetic.isNotBlank()) {
                                 Text(
@@ -1764,6 +1784,12 @@ private fun WordCard(
             }
         }
     }
+}
+
+private fun String.adaptiveWordText(): String {
+    val trimmed = trim()
+    if (trimmed.length <= 20) return trimmed
+    return trimmed.toCharArray().joinToString(separator = "\u200B")
 }
 
 @Composable
