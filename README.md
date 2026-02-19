@@ -6,7 +6,7 @@
 
 - 学习模块：认词/拼写双模式，基于 SM2 进行复习调度。
 - 查词模块：本地词典检索与词条详情展示。
-- 词书模块：预置词书 + 自定义导入（TXT/CSV，兼容 maimemo-export 的 `word,meaning` 连续流格式）。
+- 词书模块：预置词书 + 自定义导入（TXT/CSV，兼容 maimemo-export 的 `word,meaning` 连续流格式；内置词库默认使用 `wordbook_full_from_e2c.json`）。
 - 我的模块：学习统计、备份恢复、学习设置。
 - AI 实验室（可选）：
   - 支持预设服务商与自定义 OpenAI 兼容 `Base URL`。
@@ -96,6 +96,9 @@ gradle/             # 版本目录与构建配置
 ```
 
 ## 更新日志
+
+### 2026-02-19
+- 调整：内置词库文件切换为 `wordbook_full_from_e2c.json`，更大、更全的词库。
 
 ### 2026-02-18
 - 新增：预置词书。

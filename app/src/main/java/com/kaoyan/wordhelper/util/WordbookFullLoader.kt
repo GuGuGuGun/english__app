@@ -13,7 +13,7 @@ data class WordbookPronunciation(
 )
 
 object WordbookFullLoader {
-    private const val BUILTIN_FILE_NAME = "wordbook_full.json"
+    private const val BUILTIN_FILE_NAME = "wordbook_full_from_e2c.json"
     private const val BUILTIN_BOOK_NAME = "完整词库"
     private val gson = Gson()
     @Volatile

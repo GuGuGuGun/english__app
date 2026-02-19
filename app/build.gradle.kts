@@ -50,7 +50,7 @@ android {
 }
 
 val syncWordbookFullAsset by tasks.registering(Copy::class) {
-    from(rootProject.file("wordbook_full.json"))
+    from(rootProject.file("wordbook_full_from_e2c.json"))
     into(layout.buildDirectory.dir("generated/assets/main"))
 }
 
