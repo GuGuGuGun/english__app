@@ -71,6 +71,13 @@ object DateUtils {
         return daysBetweenByRefreshDay(now, nextReviewTime, zoneId) < 0L
     }
 
+    fun currentLearningDate(
+        now: Long = System.currentTimeMillis(),
+        zoneId: ZoneId = ZoneId.systemDefault()
+    ): LocalDate {
+        return toLearningDate(now, zoneId)
+    }
+
     private fun daysBetweenByRefreshDay(now: Long, target: Long, zoneId: ZoneId): Long {
         val nowDate = toLearningDate(now, zoneId)
         val targetDate = toLearningDate(target, zoneId)

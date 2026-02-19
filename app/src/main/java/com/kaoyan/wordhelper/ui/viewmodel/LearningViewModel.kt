@@ -12,6 +12,11 @@ import com.kaoyan.wordhelper.data.model.PronunciationSource
 import com.kaoyan.wordhelper.data.model.SpellingOutcome
 import com.kaoyan.wordhelper.data.model.StudyRating
 import com.kaoyan.wordhelper.data.repository.AddToNewWordsSource
+import com.kaoyan.wordhelper.data.repository.TodayNewWordsPlan
+import com.kaoyan.wordhelper.ml.core.AdaptiveResponseThreshold
+import com.kaoyan.wordhelper.ml.integration.MLEnhancedScheduler
+import com.kaoyan.wordhelper.ml.training.OnlineTrainer
+import com.kaoyan.wordhelper.util.DateUtils
 import com.kaoyan.wordhelper.util.ImmediateRetryQueuePlanner
 import com.kaoyan.wordhelper.util.RetryRandomSource
 import kotlinx.coroutines.Dispatchers
@@ -26,11 +31,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.format.DateTimeFormatter
 
 data class LearningAiState(
     val isEnabled: Boolean = false,
@@ -56,12 +63,24 @@ private data class TooEasyUndoPayload(
     val snapshots: List<Progress>
 )
 
+private data class QueueLoadParams(
+    val book: Book?,
+    val newWordsLimit: Int,
+    val shuffleNewWords: Boolean,
+    val plannedModeEnabled: Boolean
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class LearningViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as KaoyanWordApp).repository
     private val settingsRepository = (application as KaoyanWordApp).settingsRepository
     private val aiConfigRepository = (application as KaoyanWordApp).aiConfigRepository
     private val aiRepository = (application as KaoyanWordApp).aiRepository
+    private val mlScheduler: MLEnhancedScheduler = (application as KaoyanWordApp).mlScheduler
+    private val mlOnlineTrainer: OnlineTrainer? = run {
+        val app = application as KaoyanWordApp
+        OnlineTrainer(app.mlPredictor, app.database.trainingSampleDao(), app.mlModelPersistence)
+    }
 
     private val immediateRetryQueue = ArrayDeque<Word>()
     private val sessionSkippedWordIds = LinkedHashSet<Long>()
@@ -166,6 +185,11 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     private val shuffleNewWordsEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
         .map { it.newWordsShuffleEnabled }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    private val plannedNewWordsEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
+        .map { it.plannedNewWordsEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    private val todayNewWordsPlan: StateFlow<TodayNewWordsPlan> = settingsRepository.todayNewWordsPlanFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodayNewWordsPlan())
     val canRelieveReviewPressure: StateFlow<Boolean> = combine(
         activeBook,
         reviewPressureReliefEnabled,
@@ -178,22 +202,57 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             dueCount > cap
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    private var cachedResponseThresholdMs: Long = RESPONSE_TIME_DOWNGRADE_THRESHOLD_MS
+
     init {
         refreshAiAvailability()
+        // 加载ML响应时间阈值
         viewModelScope.launch {
-            combine(activeBook, newWordsLimit, shuffleNewWordsEnabled) { book, limit, shuffle ->
-                Triple(book, limit, shuffle)
-            }.collect { (book, limit, shuffle) ->
-                    if (pendingFailedWordId != null) return@collect
-                    loadQueueForBook(book, limit, shuffle)
+            settingsRepository.settingsFlow.collect { settings ->
+                if (settings.mlAdaptiveEnabled) {
+                    val modelState = withContext(Dispatchers.IO) {
+                        (getApplication<KaoyanWordApp>()).mlModelPersistence.getModelState()
+                    }
+                    cachedResponseThresholdMs = AdaptiveResponseThreshold.computeThreshold(
+                        avgResponseTime = modelState?.avgResponseTime ?: 0f,
+                        stdResponseTime = modelState?.stdResponseTime ?: 0f,
+                        mlEnabled = true
+                    )
+                } else {
+                    cachedResponseThresholdMs = RESPONSE_TIME_DOWNGRADE_THRESHOLD_MS
                 }
+            }
+        }
+        viewModelScope.launch {
+            combine(
+                activeBook,
+                newWordsLimit,
+                shuffleNewWordsEnabled,
+                todayNewWordsPlan,
+                plannedNewWordsEnabled
+            ) { book, limit, shuffle, _, plannedEnabled ->
+                QueueLoadParams(
+                    book = book,
+                    newWordsLimit = limit,
+                    shuffleNewWords = shuffle,
+                    plannedModeEnabled = plannedEnabled
+                )
+            }.collect { params ->
+                if (pendingFailedWordId != null) return@collect
+                loadQueueForBook(
+                    book = params.book,
+                    newWordsLimit = params.newWordsLimit,
+                    shuffleNewWords = params.shuffleNewWords,
+                    plannedModeEnabled = params.plannedModeEnabled
+                )
+            }
         }
         viewModelScope.launch {
             repository.getNewWordIdsFlow().collect {
                 if (pendingFailedWordId != null) return@collect
                 val book = activeBook.value
                 if (book?.type == Book.TYPE_NEW_WORDS) {
-                    loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+                    loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
                 }
             }
         }
@@ -210,7 +269,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                     if (pendingFailedWordId != null) return@collect
                     val book = activeBook.value
                     if (book != null) {
-                        loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+                        loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
                     }
                 }
         }
@@ -247,16 +306,41 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         val previousWordId = word.id
         val responseTimeMs = buildCurrentResponseTimeMs()
         val effectiveRating = resolveRecognitionRating(rating, responseTimeMs)
+        val currentSessionPosition = answeredInSession
+        val currentSessionTotal = _totalCount.value.coerceAtLeast(1)
         launchSubmit {
+            val currentMlEnabled = resolveMlEnabledForSubmission()
             pendingFailedWordId = null
             removeFromImmediateQueue(word.id)
             removeSessionSkippedWord(word.id)
+
+            // ML训练：记录特征和结果
+            if (currentMlEnabled && mlOnlineTrainer != null) {
+                val progress = withContext(Dispatchers.IO) {
+                    repository.getProgress(word.id, book.id)
+                }
+                val features = mlScheduler.extractFeatures(
+                    progress = progress,
+                    sessionPosition = currentSessionPosition,
+                    sessionTotal = currentSessionTotal
+                )
+                val isCorrect = effectiveRating != StudyRating.AGAIN
+                withContext(Dispatchers.IO) {
+                    mlOnlineTrainer.onReviewCompleted(word.id, features, isCorrect)
+                }
+            }
+
             withContext(Dispatchers.IO) {
                 repository.applyStudyResult(
                     wordId = word.id,
                     bookId = book.id,
                     rating = effectiveRating,
-                    algorithmV4Enabled = algorithmV4Enabled.value
+                    algorithmV4Enabled = algorithmV4Enabled.value,
+                    mlScheduler = if (currentMlEnabled) mlScheduler else null,
+                    mlEnabled = currentMlEnabled,
+                    sessionPosition = currentSessionPosition,
+                    sessionTotal = currentSessionTotal,
+                    responseTimeMs = responseTimeMs
                 )
             }
             if (effectiveRating == StudyRating.AGAIN) {
@@ -266,7 +350,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 _memoryAidSuggestionWordId.value = null
                 markAnswered()
             }
-            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
             emitRecognitionAutoPronounceEventIfNeeded(previousWordId)
         }
     }
@@ -277,22 +361,46 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         val previousWordId = word.id
         val responseTimeMs = buildCurrentResponseTimeMs()
         val effectiveRating = resolveRecognitionRating(rating, responseTimeMs)
+        val currentSessionPosition = answeredInSession
+        val currentSessionTotal = _totalCount.value.coerceAtLeast(1)
         launchSubmit {
+            val currentMlEnabled = resolveMlEnabledForSubmission()
             pendingFailedWordId = null
             _memoryAidSuggestionWordId.value = null
             removeFromImmediateQueue(word.id)
             removeSessionSkippedWord(word.id)
+
+            if (currentMlEnabled && mlOnlineTrainer != null) {
+                val progress = withContext(Dispatchers.IO) {
+                    repository.getProgress(word.id, book.id)
+                }
+                val features = mlScheduler.extractFeatures(
+                    progress = progress,
+                    sessionPosition = currentSessionPosition,
+                    sessionTotal = currentSessionTotal
+                )
+                val isCorrect = effectiveRating != StudyRating.AGAIN
+                withContext(Dispatchers.IO) {
+                    mlOnlineTrainer.onReviewCompleted(word.id, features, isCorrect)
+                }
+            }
+
             withContext(Dispatchers.IO) {
                 repository.removeFromNewWords(word.id)
                 repository.applyStudyResult(
                     wordId = word.id,
                     bookId = book.id,
                     rating = effectiveRating,
-                    algorithmV4Enabled = algorithmV4Enabled.value
+                    algorithmV4Enabled = algorithmV4Enabled.value,
+                    mlScheduler = if (currentMlEnabled) mlScheduler else null,
+                    mlEnabled = currentMlEnabled,
+                    sessionPosition = currentSessionPosition,
+                    sessionTotal = currentSessionTotal,
+                    responseTimeMs = responseTimeMs
                 )
             }
             markAnswered()
-            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
             emitRecognitionAutoPronounceEventIfNeeded(previousWordId)
         }
     }
@@ -304,7 +412,10 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     ) {
         val word = _currentWord.value ?: return
         val book = activeBook.value ?: return
+        val currentSessionPosition = answeredInSession
+        val currentSessionTotal = _totalCount.value.coerceAtLeast(1)
         launchSubmit {
+            val currentMlEnabled = resolveMlEnabledForSubmission()
             if (outcome == SpellingOutcome.FAILED) {
                 pendingFailedWordId = word.id
                 _memoryAidSuggestionWordId.value = word.id
@@ -314,6 +425,23 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             }
             removeFromImmediateQueue(word.id)
             removeSessionSkippedWord(word.id)
+
+            // ML训练
+            if (currentMlEnabled && mlOnlineTrainer != null) {
+                val progress = withContext(Dispatchers.IO) {
+                    repository.getProgress(word.id, book.id)
+                }
+                val features = mlScheduler.extractFeatures(
+                    progress = progress,
+                    sessionPosition = currentSessionPosition,
+                    sessionTotal = currentSessionTotal
+                )
+                val isCorrect = outcome != SpellingOutcome.FAILED
+                withContext(Dispatchers.IO) {
+                    mlOnlineTrainer.onReviewCompleted(word.id, features, isCorrect)
+                }
+            }
+
             withContext(Dispatchers.IO) {
                 repository.applySpellingOutcome(
                     wordId = word.id,
@@ -321,7 +449,11 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                     outcome = outcome,
                     attemptCount = attemptCount,
                     durationMillis = durationMillis,
-                    algorithmV4Enabled = algorithmV4Enabled.value
+                    algorithmV4Enabled = algorithmV4Enabled.value,
+                    mlScheduler = if (currentMlEnabled) mlScheduler else null,
+                    mlEnabled = currentMlEnabled,
+                    sessionPosition = currentSessionPosition,
+                    sessionTotal = currentSessionTotal
                 )
             }
             if (outcome == SpellingOutcome.FAILED) {
@@ -329,7 +461,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             }
             pendingFailedWordId = null
             markAnswered()
-            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
         }
     }
 
@@ -342,7 +474,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             enqueueImmediateRetry(currentWord)
             markAnswered()
-            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
         }
     }
 
@@ -371,7 +503,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 actionLabel = "撤销",
                 undoToken = undoToken
             )
-            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
         }
     }
 
@@ -391,7 +523,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             emitSwipeSnackbar(
                 message = if (inserted) "已加入生词本" else "已在生词本中"
             )
-            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
         }
     }
 
@@ -409,7 +541,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             answeredInSession = (answeredInSession - 1).coerceAtLeast(0)
             val book = activeBook.value
             if (book != null) {
-                loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+                loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
             }
             emitSwipeSnackbar("已撤销“太简单”")
         }
@@ -437,7 +569,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             pendingFailedWordId = null
             sessionSkippedWordIds.clear()
             answeredInSession = 0
-            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
         }
     }
 
@@ -457,7 +589,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
                 "当前待复习数量未超过上限"
             }
             pendingFailedWordId = null
-            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value)
+            loadQueueForBook(book, newWordsLimit.value, shuffleNewWordsEnabled.value, plannedNewWordsEnabled.value)
         }
     }
 
@@ -604,7 +736,12 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         _message.value = null
     }
 
-    private suspend fun loadQueueForBook(book: Book?, newWordsLimit: Int, shuffleNewWords: Boolean) {
+    private suspend fun loadQueueForBook(
+        book: Book?,
+        newWordsLimit: Int,
+        shuffleNewWords: Boolean,
+        plannedModeEnabled: Boolean
+    ) {
         if (book == null) {
             immediateRetryQueue.clear()
             sessionSkippedWordIds.clear()
@@ -625,12 +762,28 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             answeredInSession = 0
         }
         val queueSnapshot = withContext(Dispatchers.IO) {
-            repository.getStudyQueueSnapshot(book, newWordsLimit, shuffleNewWords)
+            repository.getStudyQueueSnapshot(
+                book = book,
+                newWordLimit = newWordsLimit,
+                shuffleNewWords = shuffleNewWords,
+                plannedNewWordIds = resolvePlannedNewWordIds(book, plannedModeEnabled),
+                plannedModeEnabled = plannedModeEnabled
+            )
         }
         _dueReviewCount.value = queueSnapshot.dueCount
         val mergedQueue = mergeWithImmediateRetryQueue(queueSnapshot.queue)
             .filterNot { it.id in sessionSkippedWordIds }
         updateQueue(mergedQueue)
+    }
+
+    private fun resolvePlannedNewWordIds(book: Book, plannedModeEnabled: Boolean): List<Long> {
+        if (!plannedModeEnabled) return emptyList()
+        if (book.type == Book.TYPE_NEW_WORDS) return emptyList()
+        val plan = todayNewWordsPlan.value
+        val learningDate = DateUtils.currentLearningDate().format(DATE_FORMATTER)
+        if (plan.learningDate != learningDate) return emptyList()
+        if (plan.bookId != book.id) return emptyList()
+        return plan.wordIds
     }
 
     private fun updateQueue(list: List<Word>) {
@@ -680,7 +833,7 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         responseTimeMs: Long
     ): StudyRating {
         if (!algorithmV4Enabled.value) return rating
-        if (responseTimeMs <= RESPONSE_TIME_DOWNGRADE_THRESHOLD_MS) return rating
+        if (responseTimeMs <= cachedResponseThresholdMs) return rating
         return when (rating) {
             StudyRating.GOOD -> StudyRating.HARD
             StudyRating.HARD -> StudyRating.AGAIN
@@ -732,6 +885,16 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    private suspend fun resolveMlEnabledForSubmission(): Boolean {
+        return withContext(Dispatchers.IO) {
+            val enabled = settingsRepository.settingsFlow.first().mlAdaptiveEnabled
+            if (enabled) {
+                getApplication<KaoyanWordApp>().ensureMLEngineInitialized()
+            }
+            enabled
+        }
+    }
+
     private fun enqueueImmediateRetry(word: Word) {
         removeFromImmediateQueue(word.id)
         immediateRetryQueue.addLast(word)
@@ -770,5 +933,6 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     companion object {
         private const val DEFAULT_NEW_WORDS_LIMIT = 20
         private const val RESPONSE_TIME_DOWNGRADE_THRESHOLD_MS = 6_000L
+        private val DATE_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE
     }
 }

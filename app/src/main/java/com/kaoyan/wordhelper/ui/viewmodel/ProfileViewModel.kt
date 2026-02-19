@@ -113,6 +113,18 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun updateMlAdaptiveEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateMlAdaptiveEnabled(enabled)
+        }
+    }
+
+    fun updatePlannedNewWordsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updatePlannedNewWordsEnabled(enabled)
+        }
+    }
+
     fun exportDatabase(uri: Uri?) {
         if (uri == null) return
         viewModelScope.launch {

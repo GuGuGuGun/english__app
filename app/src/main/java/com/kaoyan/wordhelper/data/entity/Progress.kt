@@ -36,7 +36,13 @@ data class Progress(
     @ColumnInfo(name = "marked_easy_count")
     val markedEasyCount: Int = 0,
     @ColumnInfo(name = "last_easy_time")
-    val lastEasyTime: Long = 0L
+    val lastEasyTime: Long = 0L,
+    @ColumnInfo(name = "consecutive_correct")
+    val consecutiveCorrect: Int = 0,
+    @ColumnInfo(name = "avg_response_time_ms")
+    val avgResponseTimeMs: Float = 0f,
+    @ColumnInfo(name = "last_review_time")
+    val lastReviewTime: Long = 0L
 ) {
     companion object {
         const val STATUS_NEW = 0

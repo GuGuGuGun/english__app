@@ -26,10 +26,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.kaoyan.wordhelper.ui.screen.BookBuildGuideScreen
 import com.kaoyan.wordhelper.ui.screen.BookManageScreen
 import com.kaoyan.wordhelper.ui.screen.AILabScreen
@@ -38,6 +40,7 @@ import com.kaoyan.wordhelper.ui.screen.LearningScreen
 import com.kaoyan.wordhelper.ui.screen.ProfileScreen
 import com.kaoyan.wordhelper.ui.screen.SearchScreen
 import com.kaoyan.wordhelper.ui.screen.StatsScreen
+import com.kaoyan.wordhelper.ui.screen.TodayNewWordsSelectScreen
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     data object Learning : Screen("learning", "学习", Icons.Filled.MenuBook)
@@ -47,6 +50,9 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     data object AILab : Screen("ai_lab", "实验室", Icons.Filled.Person)
     data object Stats : Screen("stats", "学习数据", Icons.Filled.MenuBook)
     data object BookBuildGuide : Screen("book_build_guide", "词书构建教程", Icons.Outlined.LibraryBooks)
+    data object TodayNewWordSelect : Screen("today_new_word_select/{bookId}", "今日新词", Icons.Filled.MenuBook) {
+        fun createRoute(bookId: Long): String = "today_new_word_select/$bookId"
+    }
 }
 
 private val bottomNavItems = listOf(Screen.Learning, Screen.Search, Screen.BookManage, Screen.Profile)
@@ -81,6 +87,7 @@ fun AppNavigation() {
                                     Screen.AILab -> "tab_ai_lab"
                                     Screen.Stats -> "tab_stats"
                                     Screen.BookBuildGuide -> "tab_book_build_guide"
+                                    Screen.TodayNewWordSelect -> "tab_today_new_word_select"
                                 }
                             ),
                             icon = { Icon(screen.icon, contentDescription = screen.label) },
@@ -132,7 +139,10 @@ fun AppNavigation() {
                             restoreState = true
                         }
                     },
-                    onOpenBuildGuide = { navController.navigate(Screen.BookBuildGuide.route) }
+                    onOpenBuildGuide = { navController.navigate(Screen.BookBuildGuide.route) },
+                    onOpenTodayNewWordSelect = { bookId ->
+                        navController.navigate(Screen.TodayNewWordSelect.createRoute(bookId))
+                    }
                 )
             }
             composable(Screen.Profile.route) {
@@ -149,6 +159,12 @@ fun AppNavigation() {
             }
             composable(Screen.BookBuildGuide.route) {
                 BookBuildGuideScreen(onBack = { navController.popBackStack() })
+            }
+            composable(
+                route = Screen.TodayNewWordSelect.route,
+                arguments = listOf(navArgument("bookId") { type = NavType.LongType })
+            ) {
+                TodayNewWordsSelectScreen(onBack = { navController.popBackStack() })
             }
         }
     }

@@ -447,6 +447,72 @@ fun AILabScreen(
                                 modifier = Modifier.testTag("lab_algorithm_switch")
                             )
                         }
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "ML自适应学习", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = if (uiState.mlAdaptiveEnabled) {
+                                        "已开启：按个人遗忘风险动态微调复习间隔"
+                                    } else {
+                                        "已关闭：仅使用基础调度策略"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.mlAdaptiveEnabled,
+                                onCheckedChange = viewModel::updateMlAdaptiveEnabled,
+                                modifier = Modifier.testTag("lab_ml_adaptive_switch")
+                            )
+                        }
+                        Text(
+                            text = "当前训练样本：${uiState.mlSampleCount}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("lab_ml_sample_count")
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text(
+                            text = "ML增强细则",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.testTag("lab_ml_details")
+                        )
+                        Text(
+                            text = "1) 特征输入：当前使用 12 维特征（EF、学习时段、星期、会话进度、间隔对数、历史正确率、响应时长、连续正确、距上次复习时长、全局保留率等）进行遗忘概率预测。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "2) 冷启动混合：样本<50 以人群先验为主；50-200 线性混合先验与个人模型；>200 逐步切换为个人模型主导。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "3) 调度边界：以 90% 目标保留率微调间隔，单次调整限制在原间隔 ±50%，并且最小间隔为 1 天；EF 限定在 1.30-3.00。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "4) 在线训练节奏：每次复习即时单步更新；每 10 个样本做一次 mini-batch 修正；样本上限 5000，超限自动裁剪旧样本。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "5) 指标更新：近期保留率/准确率按窗口样本动态计算；响应阈值按“均值+1.5σ”动态估计（范围 3000-15000ms），未启用 ML 时回退 6000ms。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "6) 安全回退：ML 关闭或置信度极低时，直接使用基础调度，不改动原有学习路径。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Text(
                             text = "V3 稳定：已按天为记忆单位推进（最小间隔 1 天），节奏更平滑。",
                             style = MaterialTheme.typography.bodySmall,

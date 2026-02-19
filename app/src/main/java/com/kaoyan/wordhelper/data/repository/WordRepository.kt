@@ -17,6 +17,8 @@ import com.kaoyan.wordhelper.data.model.PresetBookSeed
 import com.kaoyan.wordhelper.data.model.SpellingOutcome
 import com.kaoyan.wordhelper.data.model.StudyRating
 import com.kaoyan.wordhelper.data.model.WordDraft
+import com.kaoyan.wordhelper.ml.core.SchedulingAdjustment
+import com.kaoyan.wordhelper.ml.integration.MLEnhancedScheduler
 import com.kaoyan.wordhelper.util.DateUtils
 import com.kaoyan.wordhelper.util.Sm2Scheduler
 import kotlinx.coroutines.flow.Flow
@@ -343,7 +345,12 @@ class WordRepository(private val database: AppDatabase) {
         wordId: Long,
         bookId: Long,
         rating: StudyRating,
-        algorithmV4Enabled: Boolean = false
+        algorithmV4Enabled: Boolean = false,
+        mlScheduler: MLEnhancedScheduler? = null,
+        mlEnabled: Boolean = false,
+        sessionPosition: Int = 0,
+        sessionTotal: Int = 1,
+        responseTimeMs: Long = 0L
     ) {
         database.withTransaction {
             val existing = progressDao.getGlobalProgress(wordId)
@@ -352,11 +359,54 @@ class WordRepository(private val database: AppDatabase) {
                 rating = rating,
                 algorithmV4Enabled = algorithmV4Enabled
             )
+
+            // ML微调
+            val mlAdjustment = mlScheduler?.adjust(
+                baseIntervalDays = schedule.intervalDays,
+                baseEaseFactor = schedule.easeFactor,
+                progress = existing,
+                sessionPosition = sessionPosition,
+                sessionTotal = sessionTotal,
+                mlEnabled = mlEnabled
+            )
+            val finalIntervalDays = mlAdjustment?.adjustedIntervalDays ?: schedule.intervalDays
+            val finalEaseFactor = if (mlAdjustment != null && mlAdjustment.confidence > 0.1f) {
+                mlAdjustment.adjustedEaseFactor
+            } else {
+                schedule.easeFactor
+            }
+            val finalNextReviewTime = if (finalIntervalDays != schedule.intervalDays && finalIntervalDays > 0) {
+                Sm2Scheduler.nextReviewTimeByDays(finalIntervalDays)
+            } else {
+                schedule.nextReviewTime
+            }
+
             val previousReviewCount = existing?.reviewCount ?: 0
             val qualifiesAsCompleted = rating.quality >= StudyRating.HARD.quality
             val reviewCount = previousReviewCount + if (qualifiesAsCompleted) 1 else 0
             val isNewLearningCompletion = qualifiesAsCompleted && previousReviewCount == 0
             val isReviewCompletion = qualifiesAsCompleted && previousReviewCount > 0
+
+            // 更新ML相关字段
+            val now = System.currentTimeMillis()
+            val isCorrect = rating != StudyRating.AGAIN
+            val newConsecutiveCorrect = if (isCorrect) {
+                (existing?.consecutiveCorrect ?: 0) + 1
+            } else {
+                0
+            }
+            val oldAvgTime = existing?.avgResponseTimeMs ?: 0f
+            val oldReviewCount = existing?.reviewCount ?: 0
+            val newAvgResponseTime = if (responseTimeMs > 0L) {
+                if (oldReviewCount > 0) {
+                    (oldAvgTime * oldReviewCount + responseTimeMs) / (oldReviewCount + 1)
+                } else {
+                    responseTimeMs.toFloat()
+                }
+            } else {
+                oldAvgTime
+            }
+
             val linkedBookIds = (wordDao.getBookIdsByWordId(wordId) + bookId).distinct()
             linkedBookIds.forEach { linkedBookId ->
                 val existingByBook = progressDao.getProgress(wordId, linkedBookId)
@@ -366,14 +416,17 @@ class WordRepository(private val database: AppDatabase) {
                     bookId = linkedBookId,
                     status = schedule.status,
                     repetitions = schedule.repetitions,
-                    intervalDays = schedule.intervalDays,
-                    nextReviewTime = schedule.nextReviewTime,
-                    easeFactor = schedule.easeFactor,
+                    intervalDays = finalIntervalDays,
+                    nextReviewTime = finalNextReviewTime,
+                    easeFactor = finalEaseFactor,
                     reviewCount = reviewCount,
                     spellCorrectCount = existing?.spellCorrectCount ?: 0,
                     spellWrongCount = existing?.spellWrongCount ?: 0,
                     markedEasyCount = existing?.markedEasyCount ?: 0,
-                    lastEasyTime = existing?.lastEasyTime ?: 0L
+                    lastEasyTime = existing?.lastEasyTime ?: 0L,
+                    consecutiveCorrect = newConsecutiveCorrect,
+                    avgResponseTimeMs = newAvgResponseTime,
+                    lastReviewTime = now
                 )
                 if (existingByBook != null) {
                     progressDao.update(progress.copy(id = existingByBook.id))
@@ -401,7 +454,11 @@ class WordRepository(private val database: AppDatabase) {
         outcome: SpellingOutcome,
         attemptCount: Int,
         durationMillis: Long = 0L,
-        algorithmV4Enabled: Boolean = false
+        algorithmV4Enabled: Boolean = false,
+        mlScheduler: MLEnhancedScheduler? = null,
+        mlEnabled: Boolean = false,
+        sessionPosition: Int = 0,
+        sessionTotal: Int = 1
     ) {
         database.withTransaction {
             val existing = progressDao.getGlobalProgress(wordId)
@@ -410,6 +467,28 @@ class WordRepository(private val database: AppDatabase) {
                 outcome = outcome,
                 algorithmV4Enabled = algorithmV4Enabled
             )
+
+            // ML微调
+            val mlAdjustment = mlScheduler?.adjust(
+                baseIntervalDays = schedule.intervalDays,
+                baseEaseFactor = schedule.easeFactor,
+                progress = existing,
+                sessionPosition = sessionPosition,
+                sessionTotal = sessionTotal,
+                mlEnabled = mlEnabled
+            )
+            val finalIntervalDays = mlAdjustment?.adjustedIntervalDays ?: schedule.intervalDays
+            val finalEaseFactor = if (mlAdjustment != null && mlAdjustment.confidence > 0.1f) {
+                mlAdjustment.adjustedEaseFactor
+            } else {
+                schedule.easeFactor
+            }
+            val finalNextReviewTime = if (finalIntervalDays != schedule.intervalDays && finalIntervalDays > 0) {
+                Sm2Scheduler.nextReviewTimeByDays(finalIntervalDays)
+            } else {
+                schedule.nextReviewTime
+            }
+
             val previousReviewCount = existing?.reviewCount ?: 0
             val qualifiesAsCompleted = outcome.quality >= StudyRating.HARD.quality
             val reviewCount = previousReviewCount + if (qualifiesAsCompleted) 1 else 0
@@ -417,6 +496,28 @@ class WordRepository(private val database: AppDatabase) {
             val isReviewCompletion = qualifiesAsCompleted && previousReviewCount > 0
             val spellCorrectCount = (existing?.spellCorrectCount ?: 0) + outcome.spellCorrectDelta
             val spellWrongCount = (existing?.spellWrongCount ?: 0) + outcome.spellWrongDelta
+
+            // 更新ML相关字段
+            val now = System.currentTimeMillis()
+            val isCorrect = outcome != SpellingOutcome.FAILED
+            val newConsecutiveCorrect = if (isCorrect) {
+                (existing?.consecutiveCorrect ?: 0) + 1
+            } else {
+                0
+            }
+            val responseTimeMs = durationMillis
+            val oldAvgTime = existing?.avgResponseTimeMs ?: 0f
+            val oldReviewCount = existing?.reviewCount ?: 0
+            val newAvgResponseTime = if (responseTimeMs > 0L) {
+                if (oldReviewCount > 0) {
+                    (oldAvgTime * oldReviewCount + responseTimeMs) / (oldReviewCount + 1)
+                } else {
+                    responseTimeMs.toFloat()
+                }
+            } else {
+                oldAvgTime
+            }
+
             val linkedBookIds = (wordDao.getBookIdsByWordId(wordId) + bookId).distinct()
             linkedBookIds.forEach { linkedBookId ->
                 val existingByBook = progressDao.getProgress(wordId, linkedBookId)
@@ -426,14 +527,17 @@ class WordRepository(private val database: AppDatabase) {
                     bookId = linkedBookId,
                     status = schedule.status,
                     repetitions = schedule.repetitions,
-                    intervalDays = schedule.intervalDays,
-                    nextReviewTime = schedule.nextReviewTime,
-                    easeFactor = schedule.easeFactor,
+                    intervalDays = finalIntervalDays,
+                    nextReviewTime = finalNextReviewTime,
+                    easeFactor = finalEaseFactor,
                     reviewCount = reviewCount,
                     spellCorrectCount = spellCorrectCount,
                     spellWrongCount = spellWrongCount,
                     markedEasyCount = existing?.markedEasyCount ?: 0,
-                    lastEasyTime = existing?.lastEasyTime ?: 0L
+                    lastEasyTime = existing?.lastEasyTime ?: 0L,
+                    consecutiveCorrect = newConsecutiveCorrect,
+                    avgResponseTimeMs = newAvgResponseTime,
+                    lastReviewTime = now
                 )
                 if (existingByBook != null) {
                     progressDao.update(progress.copy(id = existingByBook.id))
@@ -458,19 +562,25 @@ class WordRepository(private val database: AppDatabase) {
     suspend fun getStudyQueue(
         book: Book,
         newWordLimit: Int = DEFAULT_NEW_WORDS_LIMIT,
-        shuffleNewWords: Boolean = false
+        shuffleNewWords: Boolean = false,
+        plannedNewWordIds: List<Long> = emptyList(),
+        plannedModeEnabled: Boolean = false
     ): List<Word> {
         return getStudyQueueSnapshot(
             book = book,
             newWordLimit = newWordLimit,
-            shuffleNewWords = shuffleNewWords
+            shuffleNewWords = shuffleNewWords,
+            plannedNewWordIds = plannedNewWordIds,
+            plannedModeEnabled = plannedModeEnabled
         ).queue
     }
 
     suspend fun getStudyQueueSnapshot(
         book: Book,
         newWordLimit: Int = DEFAULT_NEW_WORDS_LIMIT,
-        shuffleNewWords: Boolean = false
+        shuffleNewWords: Boolean = false,
+        plannedNewWordIds: List<Long> = emptyList(),
+        plannedModeEnabled: Boolean = false
     ): StudyQueueSnapshot {
         val sourceWords = if (book.type == Book.TYPE_NEW_WORDS) {
             wordDao.getNewWordsList()
@@ -517,9 +627,26 @@ class WordRepository(private val database: AppDatabase) {
         val adjustedNewWordLimit = (effectiveNewWordLimit - inLearningButUncompletedCount).coerceAtLeast(0)
         val progressIds = progressList.map { it.wordId }.toSet()
         val excludedIds = dueWords.map { it.id }.toSet() + earlyReviewWords.map { it.id }.toSet()
-        val newWords = sourceWords
+        val autoNewWords = sourceWords
             .filter { it.id !in progressIds && it.id !in excludedIds }
             .take(adjustedNewWordLimit)
+
+        val plannedCandidatesById = sourceWords
+            .asSequence()
+            .filter { it.id !in progressIds && it.id !in excludedIds }
+            .associateBy { it.id }
+        val plannedNewWords = plannedNewWordIds
+            .asSequence()
+            .mapNotNull { plannedId -> plannedCandidatesById[plannedId] }
+            .distinctBy { it.id }
+            .take(adjustedNewWordLimit)
+            .toList()
+        val newWords = when {
+            book.type == Book.TYPE_NEW_WORDS -> autoNewWords
+            plannedModeEnabled -> plannedNewWords
+            plannedNewWords.isNotEmpty() -> plannedNewWords
+            else -> autoNewWords
+        }
 
         val orderedNewWords = if (shuffleNewWords) {
             newWords.shuffled()

@@ -8,6 +8,7 @@ import com.kaoyan.wordhelper.data.model.AIConfig
 import com.kaoyan.wordhelper.data.model.AIPresets
 import com.kaoyan.wordhelper.data.model.AIProviderPreset
 import com.kaoyan.wordhelper.data.model.PronunciationSource
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +23,8 @@ data class AILabUiState(
     val modelName: String = AIConfig.DEFAULT_MODEL_NAME,
     val apiKey: String = "",
     val algorithmV4Enabled: Boolean = false,
+    val mlAdaptiveEnabled: Boolean = false,
+    val mlSampleCount: Int = 0,
     val newWordsShuffleEnabled: Boolean = false,
     val pronunciationEnabled: Boolean = false,
     val pronunciationSource: PronunciationSource = PronunciationSource.FREE_DICTIONARY,
@@ -32,10 +35,11 @@ data class AILabUiState(
 )
 
 class AILabViewModel(application: Application) : AndroidViewModel(application) {
-    private val aiConfigRepository = (application as KaoyanWordApp).aiConfigRepository
-    private val aiRepository = (application as KaoyanWordApp).aiRepository
-    private val settingsRepository = (application as KaoyanWordApp).settingsRepository
-    private val wordRepository = (application as KaoyanWordApp).repository
+    private val app = application as KaoyanWordApp
+    private val aiConfigRepository = app.aiConfigRepository
+    private val aiRepository = app.aiRepository
+    private val settingsRepository = app.settingsRepository
+    private val wordRepository = app.repository
 
     val presets: List<AIProviderPreset> = AIPresets.presets
 
@@ -47,6 +51,7 @@ class AILabViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         loadConfig()
+        observeMlSampleCount()
     }
 
     fun loadConfig() {
@@ -62,12 +67,22 @@ class AILabViewModel(application: Application) : AndroidViewModel(application) {
                 modelName = config.modelName,
                 apiKey = config.apiKey,
                 algorithmV4Enabled = settings.algorithmV4Enabled,
+                mlAdaptiveEnabled = settings.mlAdaptiveEnabled,
+                mlSampleCount = app.database.trainingSampleDao().count(),
                 newWordsShuffleEnabled = settings.newWordsShuffleEnabled,
                 pronunciationEnabled = settings.pronunciationEnabled,
                 pronunciationSource = settings.pronunciationSource,
                 recognitionAutoPronounceEnabled = settings.recognitionAutoPronounceEnabled,
                 isLoading = false
             )
+        }
+    }
+
+    private fun observeMlSampleCount() {
+        viewModelScope.launch {
+            app.database.trainingSampleDao().observeCount().collectLatest { count ->
+                _uiState.update { it.copy(mlSampleCount = count) }
+            }
         }
     }
 
@@ -78,6 +93,16 @@ class AILabViewModel(application: Application) : AndroidViewModel(application) {
                 wordRepository.repairMasteredStatusForV4()
             }
             _uiState.update { it.copy(algorithmV4Enabled = enabled) }
+        }
+    }
+
+    fun updateMlAdaptiveEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateMlAdaptiveEnabled(enabled)
+            if (enabled) {
+                app.ensureMLEngineInitialized()
+            }
+            _uiState.update { it.copy(mlAdaptiveEnabled = enabled) }
         }
     }
 

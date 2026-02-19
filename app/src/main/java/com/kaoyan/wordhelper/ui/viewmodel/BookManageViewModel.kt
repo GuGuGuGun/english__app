@@ -15,6 +15,7 @@ import com.kaoyan.wordhelper.data.repository.SettingsRepository
 import com.kaoyan.wordhelper.util.DateUtils
 import com.kaoyan.wordhelper.util.WordFileParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -63,6 +64,7 @@ data class EarlyReviewUiState(
     val selectedWordIds: Set<Long> = emptySet()
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class BookManageViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as KaoyanWordApp).repository
     private val settingsRepository: SettingsRepository = (application as KaoyanWordApp).settingsRepository
@@ -85,6 +87,10 @@ class BookManageViewModel(application: Application) : AndroidViewModel(applicati
     private val dailyNewWordsLimit: StateFlow<Int> = settingsRepository.settingsFlow
         .map { it.newWordsLimit }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 20)
+
+    val plannedNewWordsEnabled: StateFlow<Boolean> = settingsRepository.settingsFlow
+        .map { it.plannedNewWordsEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     val books: StateFlow<List<BookUiModel>> = combine(repository.getAllBooks(), dailyNewWordsLimit) { books, dailyLimit ->
         books to dailyLimit

@@ -81,7 +81,8 @@ import kotlin.math.min
 fun BookManageScreen(
     viewModel: BookManageViewModel = viewModel(),
     onStartSpelling: () -> Unit = {},
-    onOpenBuildGuide: () -> Unit = {}
+    onOpenBuildGuide: () -> Unit = {},
+    onOpenTodayNewWordSelect: (Long) -> Unit = {}
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
     val importPreview by viewModel.importPreview.collectAsStateWithLifecycle()
@@ -89,6 +90,7 @@ fun BookManageScreen(
     val isImporting by viewModel.isImporting.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val earlyReviewState by viewModel.earlyReviewUiState.collectAsStateWithLifecycle()
+    val plannedNewWordsEnabled by viewModel.plannedNewWordsEnabled.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var pendingDelete by remember { mutableStateOf<BookUiModel?>(null) }
@@ -149,6 +151,13 @@ fun BookManageScreen(
         ) {
             BookDetailSheet(
                 item = selectedBook!!,
+                plannedNewWordsEnabled = plannedNewWordsEnabled,
+                onOpenTodayNewWordSelect = {
+                    selectedBook?.let { target ->
+                        selectedBook = null
+                        onOpenTodayNewWordSelect(target.book.id)
+                    }
+                },
                 onOpenEarlyReview = {
                     selectedBook?.let { target ->
                         selectedBook = null
@@ -373,6 +382,8 @@ fun BookManageScreen(
 @Composable
 private fun BookDetailSheet(
     item: BookUiModel,
+    plannedNewWordsEnabled: Boolean,
+    onOpenTodayNewWordSelect: () -> Unit,
     onOpenEarlyReview: () -> Unit,
     onExport: () -> Unit
 ) {
@@ -412,6 +423,11 @@ private fun BookDetailSheet(
             }
         }
         if (item.book.type != Book.TYPE_NEW_WORDS) {
+            if (plannedNewWordsEnabled) {
+                TextButton(onClick = onOpenTodayNewWordSelect) {
+                    Text(text = "今日新词（自主选择）")
+                }
+            }
             Text(
                 text = "提前复习队列：${item.earlyReviewCount} 词",
                 style = MaterialTheme.typography.bodySmall

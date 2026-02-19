@@ -89,6 +89,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kaoyan.wordhelper.KaoyanWordApp
 import com.kaoyan.wordhelper.R
+import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.data.entity.Word
 import com.kaoyan.wordhelper.data.model.AIContentType
 import com.kaoyan.wordhelper.data.model.StudyRating
@@ -109,6 +110,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -525,6 +527,7 @@ fun LearningScreen(
                                     ) { swipeModifier ->
                                         WordCard(
                                             word = state.word,
+                                            currentProgress = currentProgress,
                                             isInNewWords = state.isInNewWords,
                                             onToggleNewWords = viewModel::toggleNewWord,
                                             reviewTag = reviewTag,
@@ -1460,6 +1463,7 @@ private fun RecognitionActionPanel(
 @Composable
 private fun WordCard(
     word: Word,
+    currentProgress: Progress?,
     isInNewWords: Boolean,
     onToggleNewWords: () -> Unit,
     reviewTag: String,
@@ -1682,6 +1686,36 @@ private fun WordCard(
                             WordExtraSection(title = "短语", content = word.phrases)
                             WordExtraSection(title = "近义词", content = word.synonyms)
                             WordExtraSection(title = "同根词", content = word.relWords)
+                            currentProgress?.let { progress ->
+                                val efValue = progress.easeFactor
+                                val efOffset = efValue - 2.5f
+                                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f))
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(
+                                            text = "EF系数因子：${formatEfValue(efValue)}",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "相对基准2.50偏移：${formatEfOffset(efOffset)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "当前间隔：${progress.intervalDays}天 · 复习次数：${progress.reviewCount}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1753,6 +1787,14 @@ private fun String.adaptiveWordText(): String {
     val trimmed = trim()
     if (trimmed.length <= 20) return trimmed
     return trimmed.toCharArray().joinToString(separator = "\u200B")
+}
+
+private fun formatEfValue(value: Float): String {
+    return String.format(Locale.US, "%.2f", value)
+}
+
+private fun formatEfOffset(value: Float): String {
+    return String.format(Locale.US, "%+.2f", value)
 }
 
 @Composable

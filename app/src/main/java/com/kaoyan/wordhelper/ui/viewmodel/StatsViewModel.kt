@@ -5,13 +5,18 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kaoyan.wordhelper.KaoyanWordApp
 import com.kaoyan.wordhelper.data.entity.Book
+import com.kaoyan.wordhelper.data.entity.MLModelState
+import com.kaoyan.wordhelper.data.entity.TrainingSample
 import com.kaoyan.wordhelper.data.model.DailyStatsAggregate
 import com.kaoyan.wordhelper.data.repository.ForecastDataSource
+import com.kaoyan.wordhelper.ml.features.FeatureVector
+import com.kaoyan.wordhelper.ml.ui.MemoryHeatmapEntry
 import com.kaoyan.wordhelper.util.PressureLevel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -25,6 +30,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.math.roundToInt
 
 enum class StatsRange(val days: Long, val label: String) {
     WEEK(7, "近7天"),
@@ -87,6 +93,13 @@ private data class ForecastUiBundle(
     val loadLabel: String
 )
 
+private data class MlInsights(
+    val stabilityIndex: Float,
+    val optimalHourStart: Int,
+    val optimalHourEnd: Int,
+    val heatmapData: List<MemoryHeatmapEntry>
+)
+
 data class StatsUiState(
     val range: StatsRange = StatsRange.WEEK,
     val lineData: List<LineChartEntry> = emptyList(),
@@ -100,12 +113,23 @@ data class StatsUiState(
     val forecast: List<ForecastDayUi> = emptyList(),
     val selectedForecastDate: LocalDate? = null,
     val selectedForecastWords: List<ForecastWordPreview> = emptyList(),
-    val forecastLoadLabel: String = ""
+    val forecastLoadLabel: String = "",
+    val mlStabilityIndex: Float = 0f,
+    val mlConfidence: Float = 0f,
+    val mlSampleCount: Int = 0,
+    val mlOptimalHourStart: Int = 9,
+    val mlOptimalHourEnd: Int = 11,
+    val mlHeatmapData: List<MemoryHeatmapEntry> = emptyList(),
+    val mlEnabled: Boolean = false
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class StatsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as KaoyanWordApp).repository
     private val forecastRepository = (application as KaoyanWordApp).forecastRepository
+    private val settingsRepository = (application as KaoyanWordApp).settingsRepository
+    private val mlModelPersistence = (application as KaoyanWordApp).mlModelPersistence
+    private val trainingSampleDao = (application as KaoyanWordApp).database.trainingSampleDao()
     private val zoneId = ZoneId.systemDefault()
 
     private val rangeFlow = MutableStateFlow(StatsRange.WEEK)
@@ -116,6 +140,21 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     private val forecastLoadLabelFlow = MutableStateFlow("")
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
+
+    private val mlStateFlow: StateFlow<MLModelState?> = mlModelPersistence.observeModelState()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    private val mlEnabledFlow = settingsRepository.settingsFlow.map { it.mlAdaptiveEnabled }
+    private val trainingSampleCountFlow = trainingSampleDao.observeCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+    private val mlInsightsFlow: StateFlow<MlInsights> = combine(
+        trainingSampleDao.observeRecentSamples(ML_INSIGHTS_SAMPLE_LIMIT),
+        mlStateFlow
+    ) { samples, modelState ->
+        buildMlInsights(
+            samples = samples,
+            fallbackRetention = modelState?.userBaseRetention ?: DEFAULT_RETENTION
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), defaultMlInsights(DEFAULT_RETENTION))
 
     private val lineDataFlow = rangeFlow.flatMapLatest { range ->
         val endDate = LocalDate.now(zoneId)
@@ -210,19 +249,35 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    val uiState: StateFlow<StatsUiState> = combine(
+    private val mlUiBaseFlow = combine(
         baseUiFlow,
         calendarModeFlow,
-        forecastUiFlow
-    ) { base, mode, forecastUi ->
+        forecastUiFlow,
+        mlEnabledFlow,
+        trainingSampleCountFlow
+    ) { base, mode, forecastUi, mlEnabled, trainingSampleCount ->
         base.copy(
             calendarMode = mode,
             forecast = forecastUi.forecast,
             selectedForecastDate = forecastUi.selectedDate,
             selectedForecastWords = forecastUi.selectedWords,
-            forecastLoadLabel = forecastUi.loadLabel
+            forecastLoadLabel = forecastUi.loadLabel,
+            mlConfidence = computeMlConfidence(trainingSampleCount),
+            mlSampleCount = trainingSampleCount,
+            mlEnabled = mlEnabled
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatsUiState())
+    }
+
+    val uiState: StateFlow<StatsUiState> = mlUiBaseFlow
+        .combine(mlInsightsFlow) { state, mlInsights ->
+            state.copy(
+                mlStabilityIndex = mlInsights.stabilityIndex,
+                mlOptimalHourStart = mlInsights.optimalHourStart,
+                mlOptimalHourEnd = mlInsights.optimalHourEnd,
+                mlHeatmapData = mlInsights.heatmapData
+            )
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatsUiState())
 
     init {
         refreshForecast()
@@ -413,7 +468,131 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         return "预测来源：$sourceLabel · 耗时 ${elapsedMillis.coerceAtLeast(0L)}ms"
     }
 
+    private fun buildMlInsights(samples: List<TrainingSample>, fallbackRetention: Float): MlInsights {
+        if (samples.isEmpty()) {
+            return defaultMlInsights(fallbackRetention)
+        }
+
+        val totalMatrix = Array(7) { IntArray(24) }
+        val rememberedMatrix = Array(7) { IntArray(24) }
+        val hourTotals = IntArray(24)
+        val hourRemembered = IntArray(24)
+
+        var validSamples = 0
+        var rememberedTotal = 0
+
+        samples.forEach { sample ->
+            val vector = runCatching { FeatureVector.fromJson(sample.featuresJson) }.getOrNull() ?: return@forEach
+            val hour = decodeHour(vector)
+            val day = decodeDay(vector)
+            val remembered = sample.outcome == 0
+
+            validSamples++
+            if (remembered) rememberedTotal++
+
+            totalMatrix[day][hour] += 1
+            hourTotals[hour] += 1
+            if (remembered) {
+                rememberedMatrix[day][hour] += 1
+                hourRemembered[hour] += 1
+            }
+        }
+
+        if (validSamples == 0) {
+            return defaultMlInsights(fallbackRetention)
+        }
+
+        val retentionRaw = rememberedTotal.toFloat() / validSamples.toFloat()
+        val retentionBlend = (validSamples.toFloat() / RETENTION_CONFIDENCE_SAMPLES.toFloat()).coerceIn(0f, 1f)
+        val stabilityIndex = (fallbackRetention * (1f - retentionBlend) + retentionRaw * retentionBlend)
+            .coerceIn(0.05f, 0.99f)
+
+        val hourScore = FloatArray(24) { hour ->
+            if (hourTotals[hour] > 0) {
+                hourRemembered[hour].toFloat() / hourTotals[hour].toFloat()
+            } else {
+                stabilityIndex
+            }
+        }
+
+        val heatmapData = buildList(7 * 24) {
+            for (day in 0..6) {
+                for (hour in 0..23) {
+                    val efficiency = if (totalMatrix[day][hour] > 0) {
+                        rememberedMatrix[day][hour].toFloat() / totalMatrix[day][hour].toFloat()
+                    } else {
+                        hourScore[hour]
+                    }
+                    add(
+                        MemoryHeatmapEntry(
+                            dayOfWeek = day,
+                            hour = hour,
+                            efficiency = efficiency.coerceIn(0f, 1f)
+                        )
+                    )
+                }
+            }
+        }
+
+        val optimalStart = (0..21).maxByOrNull { hour ->
+            (hourScore[hour] + hourScore[hour + 1]) / 2f
+        } ?: DEFAULT_OPTIMAL_START_HOUR
+
+        return MlInsights(
+            stabilityIndex = stabilityIndex,
+            optimalHourStart = optimalStart,
+            optimalHourEnd = optimalStart + 2,
+            heatmapData = heatmapData
+        )
+    }
+
+    private fun decodeHour(vector: FeatureVector): Int {
+        return (vector[1] * 23f).roundToInt().coerceIn(0, 23)
+    }
+
+    private fun decodeDay(vector: FeatureVector): Int {
+        val calendarDay = (vector[2] * 6f).roundToInt().coerceIn(0, 6)
+        return if (calendarDay == 0) 6 else calendarDay - 1
+    }
+
+    private fun computeMlConfidence(sampleCount: Int): Float {
+        return when {
+            sampleCount < 50 -> sampleCount.toFloat() / 50f * 0.3f
+            sampleCount < 200 -> {
+                val progress = (sampleCount - 50).toFloat() / 150f
+                0.3f + progress * 0.5f
+            }
+
+            else -> (0.8f + (sampleCount - 200).toFloat() / 1000f).coerceAtMost(1f)
+        }.coerceIn(0f, 1f)
+    }
+
+    private fun defaultMlInsights(fallbackRetention: Float): MlInsights {
+        return MlInsights(
+            stabilityIndex = fallbackRetention.coerceIn(0.05f, 0.99f),
+            optimalHourStart = DEFAULT_OPTIMAL_START_HOUR,
+            optimalHourEnd = DEFAULT_OPTIMAL_START_HOUR + 2,
+            heatmapData = buildList(7 * 24) {
+                for (day in 0..6) {
+                    for (hour in 0..23) {
+                        add(
+                            MemoryHeatmapEntry(
+                                dayOfWeek = day,
+                                hour = hour,
+                                efficiency = fallbackRetention.coerceIn(0f, 1f)
+                            )
+                        )
+                    }
+                }
+            }
+        )
+    }
+
     companion object {
         private val DATE_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE
+        private const val DEFAULT_RETENTION = 0.85f
+        private const val ML_INSIGHTS_SAMPLE_LIMIT = 500
+        private const val RETENTION_CONFIDENCE_SAMPLES = 80
+        private const val DEFAULT_OPTIMAL_START_HOUR = 9
     }
 }

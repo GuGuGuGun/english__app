@@ -101,4 +101,24 @@ interface ProgressDao {
 
     @Query("DELETE FROM tb_progress WHERE word_id = :wordId")
     suspend fun deleteByWordId(wordId: Long)
+
+    @Query("SELECT AVG(avg_response_time_ms) FROM tb_progress WHERE avg_response_time_ms > 0")
+    suspend fun getAverageResponseTime(): Float?
+
+    @Query(
+        """SELECT AVG(
+            CASE WHEN review_count > 0
+                THEN CAST(review_count - spell_wrong_count AS REAL) / review_count
+                ELSE 0.5
+            END
+        ) FROM tb_progress WHERE review_count > 0"""
+    )
+    suspend fun getGlobalAccuracy(): Float?
+
+    @Query(
+        """SELECT avg_response_time_ms FROM tb_progress
+           WHERE avg_response_time_ms > 0
+           ORDER BY id DESC LIMIT :limit"""
+    )
+    suspend fun getRecentResponseTimes(limit: Int = 100): List<Float>
 }

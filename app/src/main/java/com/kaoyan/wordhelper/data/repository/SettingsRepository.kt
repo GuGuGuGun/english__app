@@ -5,8 +5,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.kaoyan.wordhelper.data.model.PronunciationSource
+import com.kaoyan.wordhelper.util.DateUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -20,6 +22,8 @@ private const val DEFAULT_PRONUNCIATION_ENABLED = false
 private const val DEFAULT_PRONUNCIATION_SOURCE = 0
 private const val DEFAULT_RECOGNITION_AUTO_PRONOUNCE_ENABLED = false
 private const val DEFAULT_NEW_WORDS_SHUFFLE_ENABLED = false
+private const val DEFAULT_ML_ADAPTIVE_ENABLED = false
+private const val DEFAULT_PLANNED_NEW_WORDS_ENABLED = false
 private val Context.dataStore by preferencesDataStore(name = "user_settings")
 
 data class UserSettings(
@@ -33,7 +37,15 @@ data class UserSettings(
     val pronunciationEnabled: Boolean = DEFAULT_PRONUNCIATION_ENABLED,
     val pronunciationSource: PronunciationSource = PronunciationSource.FREE_DICTIONARY,
     val recognitionAutoPronounceEnabled: Boolean = DEFAULT_RECOGNITION_AUTO_PRONOUNCE_ENABLED,
-    val newWordsShuffleEnabled: Boolean = DEFAULT_NEW_WORDS_SHUFFLE_ENABLED
+    val newWordsShuffleEnabled: Boolean = DEFAULT_NEW_WORDS_SHUFFLE_ENABLED,
+    val mlAdaptiveEnabled: Boolean = DEFAULT_ML_ADAPTIVE_ENABLED,
+    val plannedNewWordsEnabled: Boolean = DEFAULT_PLANNED_NEW_WORDS_ENABLED
+)
+
+data class TodayNewWordsPlan(
+    val learningDate: String = "",
+    val bookId: Long? = null,
+    val wordIds: List<Long> = emptyList()
 )
 
 enum class DarkMode(val value: Int) {
@@ -50,6 +62,21 @@ enum class DarkMode(val value: Int) {
 
 class SettingsRepository(private val context: Context) {
     private val dataStore = context.dataStore
+
+    val todayNewWordsPlanFlow: Flow<TodayNewWordsPlan> = dataStore.data.map { prefs ->
+        val rawDate = prefs[KEY_TODAY_NEW_WORDS_PLAN_DATE].orEmpty()
+        val rawBookId = prefs[KEY_TODAY_NEW_WORDS_PLAN_BOOK_ID].orEmpty()
+        val rawWordIds = prefs[KEY_TODAY_NEW_WORDS_PLAN_WORD_IDS].orEmpty()
+        val parsedWordIds = rawWordIds
+            .split(',')
+            .mapNotNull { token -> token.trim().toLongOrNull() }
+            .distinct()
+        TodayNewWordsPlan(
+            learningDate = rawDate,
+            bookId = rawBookId.toLongOrNull(),
+            wordIds = parsedWordIds
+        )
+    }
 
     val settingsFlow: Flow<UserSettings> = dataStore.data.map { prefs ->
         UserSettings(
@@ -70,7 +97,11 @@ class SettingsRepository(private val context: Context) {
                 prefs[KEY_RECOGNITION_AUTO_PRONOUNCE_ENABLED]
                     ?: DEFAULT_RECOGNITION_AUTO_PRONOUNCE_ENABLED,
             newWordsShuffleEnabled =
-                prefs[KEY_NEW_WORDS_SHUFFLE_ENABLED] ?: DEFAULT_NEW_WORDS_SHUFFLE_ENABLED
+                prefs[KEY_NEW_WORDS_SHUFFLE_ENABLED] ?: DEFAULT_NEW_WORDS_SHUFFLE_ENABLED,
+            mlAdaptiveEnabled =
+                prefs[KEY_ML_ADAPTIVE_ENABLED] ?: DEFAULT_ML_ADAPTIVE_ENABLED,
+            plannedNewWordsEnabled =
+                prefs[KEY_PLANNED_NEW_WORDS_ENABLED] ?: DEFAULT_PLANNED_NEW_WORDS_ENABLED
         )
     }
 
@@ -118,6 +149,32 @@ class SettingsRepository(private val context: Context) {
         dataStore.edit { prefs -> prefs[KEY_NEW_WORDS_SHUFFLE_ENABLED] = enabled }
     }
 
+    suspend fun updateMlAdaptiveEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[KEY_ML_ADAPTIVE_ENABLED] = enabled }
+    }
+
+    suspend fun updatePlannedNewWordsEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[KEY_PLANNED_NEW_WORDS_ENABLED] = enabled }
+    }
+
+    suspend fun saveTodayNewWordsPlan(bookId: Long, wordIds: List<Long>) {
+        val learningDate = DateUtils.currentLearningDate().format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
+        val normalizedWordIds = wordIds.distinct().joinToString(separator = ",")
+        dataStore.edit { prefs ->
+            prefs[KEY_TODAY_NEW_WORDS_PLAN_DATE] = learningDate
+            prefs[KEY_TODAY_NEW_WORDS_PLAN_BOOK_ID] = bookId.toString()
+            prefs[KEY_TODAY_NEW_WORDS_PLAN_WORD_IDS] = normalizedWordIds
+        }
+    }
+
+    suspend fun clearTodayNewWordsPlan() {
+        dataStore.edit { prefs ->
+            prefs.remove(KEY_TODAY_NEW_WORDS_PLAN_DATE)
+            prefs.remove(KEY_TODAY_NEW_WORDS_PLAN_BOOK_ID)
+            prefs.remove(KEY_TODAY_NEW_WORDS_PLAN_WORD_IDS)
+        }
+    }
+
     companion object {
 
         private val KEY_NEW_WORDS_LIMIT = intPreferencesKey("new_words_limit")
@@ -133,5 +190,10 @@ class SettingsRepository(private val context: Context) {
         private val KEY_RECOGNITION_AUTO_PRONOUNCE_ENABLED =
             booleanPreferencesKey("recognition_auto_pronounce_enabled")
         private val KEY_NEW_WORDS_SHUFFLE_ENABLED = booleanPreferencesKey("new_words_shuffle_enabled")
+        private val KEY_ML_ADAPTIVE_ENABLED = booleanPreferencesKey("ml_adaptive_enabled")
+        private val KEY_PLANNED_NEW_WORDS_ENABLED = booleanPreferencesKey("planned_new_words_enabled")
+        private val KEY_TODAY_NEW_WORDS_PLAN_DATE = stringPreferencesKey("today_new_words_plan_date")
+        private val KEY_TODAY_NEW_WORDS_PLAN_BOOK_ID = stringPreferencesKey("today_new_words_plan_book_id")
+        private val KEY_TODAY_NEW_WORDS_PLAN_WORD_IDS = stringPreferencesKey("today_new_words_plan_word_ids")
     }
 }

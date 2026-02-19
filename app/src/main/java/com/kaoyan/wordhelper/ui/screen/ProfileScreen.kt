@@ -198,9 +198,11 @@ fun ProfileScreen(
                         newWordsLimit = settings.newWordsLimit,
                         fontScale = settings.fontScale,
                         darkMode = settings.darkMode,
+                        plannedNewWordsEnabled = settings.plannedNewWordsEnabled,
                         onNewWordsLimitChange = viewModel::updateNewWordsLimit,
                         onFontScaleChange = viewModel::updateFontScale,
-                        onDarkModeChange = viewModel::updateDarkMode
+                        onDarkModeChange = viewModel::updateDarkMode,
+                        onPlannedNewWordsEnabledChange = viewModel::updatePlannedNewWordsEnabled
                     )
                 }
             }
@@ -355,9 +357,11 @@ private fun SettingsCard(
     newWordsLimit: Int,
     fontScale: Float,
     darkMode: DarkMode,
+    plannedNewWordsEnabled: Boolean,
     onNewWordsLimitChange: (Int) -> Unit,
     onFontScaleChange: (Float) -> Unit,
-    onDarkModeChange: (DarkMode) -> Unit
+    onDarkModeChange: (DarkMode) -> Unit,
+    onPlannedNewWordsEnabledChange: (Boolean) -> Unit
 ) {
     var dailyNewWordsInput by remember(newWordsLimit) { mutableStateOf(newWordsLimit.toString()) }
     val parsedDailyNewWords = dailyNewWordsInput.toIntOrNull()
@@ -416,6 +420,19 @@ private fun SettingsCard(
                 optionTags = listOf("settings_dark_follow", "settings_dark_light", "settings_dark_dark"),
                 selected = darkMode,
                 onSelect = onDarkModeChange
+            )
+            SettingRow(
+                title = "规划单词",
+                options = listOf(false, true),
+                optionLabels = listOf("关闭", "开启"),
+                optionTags = listOf("settings_plan_words_off", "settings_plan_words_on"),
+                selected = plannedNewWordsEnabled,
+                onSelect = onPlannedNewWordsEnabledChange
+            )
+            Text(
+                text = "开启后将停止自动推送新词，仅按“今日新词（自主选择）”中的规划进行学习。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -496,7 +513,7 @@ private fun AboutCard() {
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(text = "关于软件", style = MaterialTheme.typography.titleLarge)
-            Text(text = "考研离线背单词助手", fontWeight = FontWeight.SemiBold)
+            Text(text = "真的不想背单词了:(", fontWeight = FontWeight.SemiBold)
             Text(text = "版本 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
             Text(text = "完全离线运行，无广告干扰。", style = MaterialTheme.typography.bodySmall)
         }

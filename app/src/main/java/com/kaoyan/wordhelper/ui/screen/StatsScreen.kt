@@ -47,6 +47,8 @@ import com.kaoyan.wordhelper.ui.component.HeatmapLegend
 import com.kaoyan.wordhelper.ui.component.MasteryDonutChart
 import com.kaoyan.wordhelper.ui.component.MasteryLegend
 import com.kaoyan.wordhelper.ui.component.MemoryLineChart
+import com.kaoyan.wordhelper.ml.ui.MemoryHeatmapCard
+import com.kaoyan.wordhelper.ml.ui.MemoryStabilityCard
 import com.kaoyan.wordhelper.ui.theme.AlertRed
 import com.kaoyan.wordhelper.ui.theme.FuzzyYellow
 import com.kaoyan.wordhelper.ui.theme.KnownGreen
@@ -147,6 +149,20 @@ fun StatsContent(
         }
         item {
             MasteryChartCard(mastery = uiState.mastery)
+        }
+        if (uiState.mlEnabled) {
+            item {
+                MemoryStabilityCard(
+                    stabilityIndex = uiState.mlStabilityIndex,
+                    confidence = uiState.mlConfidence,
+                    optimalHourStart = uiState.mlOptimalHourStart,
+                    optimalHourEnd = uiState.mlOptimalHourEnd,
+                    sampleCount = uiState.mlSampleCount
+                )
+            }
+            item {
+                MemoryHeatmapCard(data = uiState.mlHeatmapData)
+            }
         }
     }
 }

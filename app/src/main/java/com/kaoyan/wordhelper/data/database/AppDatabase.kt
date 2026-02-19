@@ -16,7 +16,13 @@ import com.kaoyan.wordhelper.data.dao.ProgressDao
 import com.kaoyan.wordhelper.data.dao.StudyLogDao
 import com.kaoyan.wordhelper.data.dao.WordDao
 import com.kaoyan.wordhelper.data.dao.AICacheDao
+import com.kaoyan.wordhelper.data.dao.MLModelStateDao
+import com.kaoyan.wordhelper.data.dao.TrainingSampleDao
+import com.kaoyan.wordhelper.data.dao.WordMLStatsDao
 import com.kaoyan.wordhelper.data.entity.AICache
+import com.kaoyan.wordhelper.data.entity.MLModelState
+import com.kaoyan.wordhelper.data.entity.TrainingSample
+import com.kaoyan.wordhelper.data.entity.WordMLStats
 import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.entity.BookWordContent
 import com.kaoyan.wordhelper.data.entity.DailyStats
@@ -43,9 +49,12 @@ import kotlinx.coroutines.launch
         DailyStats::class,
         EarlyReviewRef::class,
         AICache::class,
-        ForecastCache::class
+        ForecastCache::class,
+        MLModelState::class,
+        TrainingSample::class,
+        WordMLStats::class
     ],
-    version = 10,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -59,6 +68,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun earlyReviewDao(): EarlyReviewDao
     abstract fun aiCacheDao(): AICacheDao
     abstract fun forecastCacheDao(): ForecastCacheDao
+    abstract fun mlModelStateDao(): MLModelStateDao
+    abstract fun trainingSampleDao(): TrainingSampleDao
+    abstract fun wordMLStatsDao(): WordMLStatsDao
 
     companion object {
         @Volatile
@@ -85,7 +97,9 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_6_7,
                     MIGRATION_7_8,
                     MIGRATION_8_9,
-                    MIGRATION_9_10
+                    MIGRATION_9_10,
+                    MIGRATION_10_11,
+                    MIGRATION_11_12
                 )
                 .build()
         }
@@ -464,6 +478,152 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE tb_book_word_content ADD COLUMN synonyms TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE tb_book_word_content ADD COLUMN rel_words TEXT NOT NULL DEFAULT ''")
             }
+        }
+
+        @VisibleForTesting
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 扩展 tb_progress 表
+                db.execSQL("ALTER TABLE tb_progress ADD COLUMN consecutive_correct INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE tb_progress ADD COLUMN avg_response_time_ms REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE tb_progress ADD COLUMN last_review_time INTEGER NOT NULL DEFAULT 0")
+
+                // 新增 ml_model_state 表（单例）
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS ml_model_state (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        n_params_json TEXT NOT NULL DEFAULT '',
+                        z_params_json TEXT NOT NULL DEFAULT '',
+                        weights_json TEXT NOT NULL DEFAULT '',
+                        version INTEGER NOT NULL DEFAULT 0,
+                        sample_count INTEGER NOT NULL DEFAULT 0,
+                        last_training_time INTEGER NOT NULL DEFAULT 0,
+                        global_accuracy REAL NOT NULL DEFAULT 0,
+                        user_base_retention REAL NOT NULL DEFAULT 0.85,
+                        avg_response_time REAL NOT NULL DEFAULT 0,
+                        std_response_time REAL NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+
+                // 新增 training_samples 表
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS training_samples (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        word_id INTEGER NOT NULL,
+                        features_json TEXT NOT NULL,
+                        outcome INTEGER NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        prediction_error REAL NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+
+                // 新增 word_ml_stats 表
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS word_ml_stats (
+                        word_id INTEGER NOT NULL PRIMARY KEY,
+                        predicted_difficulty REAL NOT NULL DEFAULT 0.5,
+                        personal_ef REAL NOT NULL DEFAULT 2.5,
+                        avg_forget_prob REAL NOT NULL DEFAULT 0.5,
+                        review_count INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        @VisibleForTesting
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureColumnExists(
+                    db = db,
+                    table = "tb_progress",
+                    column = "consecutive_correct",
+                    definition = "INTEGER NOT NULL DEFAULT 0"
+                )
+                ensureColumnExists(
+                    db = db,
+                    table = "tb_progress",
+                    column = "avg_response_time_ms",
+                    definition = "REAL NOT NULL DEFAULT 0"
+                )
+                ensureColumnExists(
+                    db = db,
+                    table = "tb_progress",
+                    column = "last_review_time",
+                    definition = "INTEGER NOT NULL DEFAULT 0"
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS ml_model_state (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        n_params_json TEXT NOT NULL DEFAULT '',
+                        z_params_json TEXT NOT NULL DEFAULT '',
+                        weights_json TEXT NOT NULL DEFAULT '',
+                        version INTEGER NOT NULL DEFAULT 0,
+                        sample_count INTEGER NOT NULL DEFAULT 0,
+                        last_training_time INTEGER NOT NULL DEFAULT 0,
+                        global_accuracy REAL NOT NULL DEFAULT 0,
+                        user_base_retention REAL NOT NULL DEFAULT 0.85,
+                        avg_response_time REAL NOT NULL DEFAULT 0,
+                        std_response_time REAL NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS training_samples (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        word_id INTEGER NOT NULL,
+                        features_json TEXT NOT NULL,
+                        outcome INTEGER NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        prediction_error REAL NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS word_ml_stats (
+                        word_id INTEGER NOT NULL PRIMARY KEY,
+                        predicted_difficulty REAL NOT NULL DEFAULT 0.5,
+                        personal_ef REAL NOT NULL DEFAULT 2.5,
+                        avg_forget_prob REAL NOT NULL DEFAULT 0.5,
+                        review_count INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        private fun ensureColumnExists(
+            db: SupportSQLiteDatabase,
+            table: String,
+            column: String,
+            definition: String
+        ) {
+            if (hasColumn(db, table, column)) return
+            db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
+        }
+
+        private fun hasColumn(db: SupportSQLiteDatabase, table: String, column: String): Boolean {
+            db.query("PRAGMA table_info($table)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                if (nameIndex == -1) return false
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == column) {
+                        return true
+                    }
+                }
+            }
+            return false
         }
 
         private suspend fun prepopulate(database: AppDatabase) {
