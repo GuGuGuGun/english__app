@@ -624,13 +624,11 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             pendingFailedWordId = null
             answeredInSession = 0
         }
-        val (queue, dueCount) = withContext(Dispatchers.IO) {
-            val dueCount = repository.getDueWords(book.id).size
-            val effectiveNewWordLimit = repository.estimateRemainingNewWordsToday(book, newWordsLimit)
-            repository.getStudyQueue(book, effectiveNewWordLimit, shuffleNewWords) to dueCount
+        val queueSnapshot = withContext(Dispatchers.IO) {
+            repository.getStudyQueueSnapshot(book, newWordsLimit, shuffleNewWords)
         }
-        _dueReviewCount.value = dueCount
-        val mergedQueue = mergeWithImmediateRetryQueue(queue)
+        _dueReviewCount.value = queueSnapshot.dueCount
+        val mergedQueue = mergeWithImmediateRetryQueue(queueSnapshot.queue)
             .filterNot { it.id in sessionSkippedWordIds }
         updateQueue(mergedQueue)
     }

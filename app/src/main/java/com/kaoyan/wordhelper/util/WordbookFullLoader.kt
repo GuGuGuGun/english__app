@@ -13,37 +13,47 @@ data class WordbookPronunciation(
 )
 
 object WordbookFullLoader {
-    private const val BUILTIN_FILE_NAME = "wordbook_full_from_e2c.json"
-    private const val BUILTIN_BOOK_NAME = "完整词库"
+    private data class BuiltinWordbookSource(
+        val fileName: String,
+        val bookName: String
+    )
+
+    private data class BuiltinWordbookCache(
+        val presets: List<PresetBookSeed>,
+        val pronunciationIndex: Map<String, WordbookPronunciation>
+    )
+
+    private val builtinSources = listOf(
+        BuiltinWordbookSource(
+            fileName = "wordbook_full_from_e2c.json",
+            bookName = "完整词库"
+        ),
+        BuiltinWordbookSource(
+            fileName = "wordbook_full.json",
+            bookName = "完整词库（精选）"
+        )
+    )
+
     private val gson = Gson()
     @Volatile
-    private var cachedEntries: List<WordbookFullEntry>? = null
+    private var cachedWordbook: BuiltinWordbookCache? = null
+
+    fun loadPresets(context: Context): Result<List<PresetBookSeed>> {
+        return runCatching {
+            val presets = loadWordbookCache(context).presets
+            require(presets.isNotEmpty()) { "内置词库为空" }
+            presets
+        }
+    }
 
     fun loadPreset(context: Context): Result<PresetBookSeed> {
-        return runCatching {
-            val entries = loadEntries(context)
-            val drafts = entries.asSequence()
-                .mapNotNull(::toWordDraft)
-                .distinctBy { it.word.trim().lowercase() }
-                .toList()
-            require(drafts.isNotEmpty()) { "内置词库为空" }
-            PresetBookSeed(name = BUILTIN_BOOK_NAME, drafts = drafts)
+        return loadPresets(context).mapCatching { presets ->
+            presets.first()
         }
     }
 
     fun loadPronunciationIndex(context: Context): Result<Map<String, WordbookPronunciation>> {
-        return runCatching {
-            loadEntries(context).asSequence()
-                .mapNotNull { entry ->
-                    val word = entry.word.trim().lowercase()
-                    if (word.isBlank()) return@mapNotNull null
-                    word to WordbookPronunciation(
-                        ukSpeech = entry.ukspeech.trim(),
-                        usSpeech = entry.usspeech.trim()
-                    )
-                }
-                .toMap()
-        }
+        return runCatching { loadWordbookCache(context).pronunciationIndex }
     }
 
     private fun toWordDraft(entry: WordbookFullEntry): WordDraft? {
@@ -54,7 +64,7 @@ object WordbookFullLoader {
         val phrases = buildPhrases(entry)
         val synonyms = buildSynonyms(entry)
         val relWords = buildRelWords(entry)
-        val meaning = buildMeaning(entry)
+        val meaning = buildMeaning(entry, phrases, synonyms, relWords)
         val example = buildExample(entry)
 
         return WordDraft(
@@ -68,7 +78,12 @@ object WordbookFullLoader {
         )
     }
 
-    private fun buildMeaning(entry: WordbookFullEntry): String {
+    private fun buildMeaning(
+        entry: WordbookFullEntry,
+        phrases: String,
+        synonyms: String,
+        relWords: String
+    ): String {
         val translations = entry.translations
             .mapNotNull { item ->
                 val text = item.tranCn.trim()
@@ -81,17 +96,15 @@ object WordbookFullLoader {
             return translations.joinToString("；")
         }
 
-        val phraseFallback = buildPhrases(entry)
-        if (phraseFallback.isNotBlank()) {
-            return phraseFallback
+        if (phrases.isNotBlank()) {
+            return phrases
         }
 
-        val synonymFallback = buildSynonyms(entry)
-        if (synonymFallback.isNotBlank()) {
-            return synonymFallback
+        if (synonyms.isNotBlank()) {
+            return synonyms
         }
 
-        return buildRelWords(entry)
+        return relWords
     }
 
     private fun buildPhrases(entry: WordbookFullEntry): String {
@@ -156,18 +169,84 @@ object WordbookFullLoader {
         return "$en\n$cn"
     }
 
-    private fun loadEntries(context: Context): List<WordbookFullEntry> {
-        cachedEntries?.let { return it }
+    private fun normalizeWordKey(rawWord: String): String {
+        return rawWord.trim().lowercase()
+    }
+
+    private fun loadWordbookCache(context: Context): BuiltinWordbookCache {
+        cachedWordbook?.let { return it }
         return synchronized(this) {
-            cachedEntries?.let { return@synchronized it }
-            val entries = context.assets.open(BUILTIN_FILE_NAME).use { input ->
-                InputStreamReader(input).use { reader ->
-                    val payload = gson.fromJson(reader, WordbookFullPayload::class.java)
-                    payload.data.orEmpty()
+            cachedWordbook?.let { return@synchronized it }
+
+            val presets = ArrayList<PresetBookSeed>(builtinSources.size)
+            val pronunciationMap = LinkedHashMap<String, WordbookPronunciation>()
+
+            builtinSources.forEach { source ->
+                val entries = runCatching {
+                    loadEntries(context, source.fileName)
+                }.getOrElse {
+                    return@forEach
+                }
+                if (entries.isEmpty()) {
+                    return@forEach
+                }
+
+                val draftsByKey = LinkedHashMap<String, WordDraft>(entries.size)
+                entries.forEach { entry ->
+                    val draft = toWordDraft(entry) ?: return@forEach
+                    val key = normalizeWordKey(draft.word)
+                    if (key.isBlank() || draftsByKey.containsKey(key)) {
+                        return@forEach
+                    }
+                    draftsByKey[key] = draft
+                }
+
+                if (draftsByKey.isNotEmpty()) {
+                    presets.add(
+                        PresetBookSeed(
+                            name = source.bookName,
+                            drafts = draftsByKey.values.toList()
+                        )
+                    )
+                }
+
+                entries.forEach { entry ->
+                    val key = normalizeWordKey(entry.word)
+                    if (key.isBlank()) {
+                        return@forEach
+                    }
+                    val candidate = WordbookPronunciation(
+                        ukSpeech = entry.ukspeech.trim(),
+                        usSpeech = entry.usspeech.trim()
+                    )
+                    val existing = pronunciationMap[key]
+                    if (existing == null) {
+                        pronunciationMap[key] = candidate
+                        return@forEach
+                    }
+                    val merged = WordbookPronunciation(
+                        ukSpeech = if (existing.ukSpeech.isBlank()) candidate.ukSpeech else existing.ukSpeech,
+                        usSpeech = if (existing.usSpeech.isBlank()) candidate.usSpeech else existing.usSpeech
+                    )
+                    pronunciationMap[key] = merged
                 }
             }
-            cachedEntries = entries
-            entries
+
+            val resolved = BuiltinWordbookCache(
+                presets = presets,
+                pronunciationIndex = pronunciationMap
+            )
+            cachedWordbook = resolved
+            resolved
+        }
+    }
+
+    private fun loadEntries(context: Context, fileName: String): List<WordbookFullEntry> {
+        return context.assets.open(fileName).use { input ->
+            InputStreamReader(input).use { reader ->
+                val payload = gson.fromJson(reader, WordbookFullPayload::class.java)
+                payload.data.orEmpty()
+            }
         }
     }
 }

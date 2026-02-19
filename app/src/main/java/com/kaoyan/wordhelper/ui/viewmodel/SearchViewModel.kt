@@ -108,9 +108,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 withContext(Dispatchers.IO) {
                     val scopedBookId = if (activeBook?.type == Book.TYPE_NEW_WORDS) null else activeBook?.id
-                    repository.searchWords(trimmed, scopedBookId).map { word ->
-                        val progressBookId = activeBook?.id ?: word.bookId
-                        word to repository.getProgress(word.id, progressBookId)
+                    val words = repository.searchWords(trimmed, scopedBookId)
+                    val progressByWordId = repository.getGlobalProgressMap(words.map { it.id })
+                    words.map { word ->
+                        word to progressByWordId[word.id]
                     }
                 }
             }

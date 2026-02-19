@@ -26,6 +26,11 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.ceil
 
+data class StudyQueueSnapshot(
+    val queue: List<Word>,
+    val dueCount: Int
+)
+
 class WordRepository(private val database: AppDatabase) {
     private val bookDao = database.bookDao()
     private val wordDao = database.wordDao()
@@ -229,6 +234,18 @@ class WordRepository(private val database: AppDatabase) {
 
     suspend fun getProgress(wordId: Long, bookId: Long): Progress? {
         return progressDao.getGlobalProgress(wordId)
+    }
+
+    suspend fun getGlobalProgressMap(wordIds: Collection<Long>): Map<Long, Progress> {
+        if (wordIds.isEmpty()) return emptyMap()
+        val grouped = progressDao.getProgressByWordIds(wordIds.distinct())
+            .groupBy { it.wordId }
+        val result = LinkedHashMap<Long, Progress>(grouped.size)
+        grouped.forEach { (wordId, progressList) ->
+            val best = progressList.maxWithOrNull(PROGRESS_PRIORITY_COMPARATOR) ?: return@forEach
+            result[wordId] = best
+        }
+        return result
     }
 
     suspend fun getProgressSnapshotsForWord(wordId: Long): List<Progress> {
@@ -443,25 +460,33 @@ class WordRepository(private val database: AppDatabase) {
         newWordLimit: Int = DEFAULT_NEW_WORDS_LIMIT,
         shuffleNewWords: Boolean = false
     ): List<Word> {
+        return getStudyQueueSnapshot(
+            book = book,
+            newWordLimit = newWordLimit,
+            shuffleNewWords = shuffleNewWords
+        ).queue
+    }
+
+    suspend fun getStudyQueueSnapshot(
+        book: Book,
+        newWordLimit: Int = DEFAULT_NEW_WORDS_LIMIT,
+        shuffleNewWords: Boolean = false
+    ): StudyQueueSnapshot {
         val sourceWords = if (book.type == Book.TYPE_NEW_WORDS) {
             wordDao.getNewWordsList()
         } else {
             wordDao.getWordsByBookList(book.id)
         }
-        if (sourceWords.isEmpty()) return emptyList()
+        if (sourceWords.isEmpty()) {
+            return StudyQueueSnapshot(queue = emptyList(), dueCount = 0)
+        }
 
-        val progressList = progressDao.getProgressByWordIds(sourceWords.map { it.id })
-            .groupBy { it.wordId }
-            .mapNotNull { (_, grouped) ->
-                grouped.maxWithOrNull(
-                    compareBy<Progress> { it.reviewCount }
-                        .thenBy { it.nextReviewTime }
-                        .thenBy { it.id }
-                )
-            }
+        val progressByWordId = getGlobalProgressMap(sourceWords.map { it.id })
+        val progressList = progressByWordId.values.toList()
         val dueProgress = progressList
             .filter { it.status != Progress.STATUS_MASTERED && it.nextReviewTime > 0 && DateUtils.isDue(it.nextReviewTime) }
             .sortedBy { it.nextReviewTime }
+        val dueCount = dueProgress.size
         val dueOrder = dueProgress.mapIndexed { index, progress -> progress.wordId to index }.toMap()
 
         val dueWords = sourceWords
@@ -481,7 +506,15 @@ class WordRepository(private val database: AppDatabase) {
         val inLearningButUncompletedCount = progressList.count { progress ->
             progress.status != Progress.STATUS_MASTERED && progress.reviewCount <= 0
         }
-        val adjustedNewWordLimit = (newWordLimit - inLearningButUncompletedCount).coerceAtLeast(0)
+        val effectiveNewWordLimit = if (book.type == Book.TYPE_NEW_WORDS) {
+            Int.MAX_VALUE
+        } else {
+            val todayLearned = getTodayNewWordsCount()
+            val remainingByDailyLimit = (newWordLimit - todayLearned).coerceAtLeast(0)
+            val remainingInBook = sourceWords.count { it.id !in progressByWordId.keys }
+            minOf(remainingByDailyLimit, remainingInBook)
+        }
+        val adjustedNewWordLimit = (effectiveNewWordLimit - inLearningButUncompletedCount).coerceAtLeast(0)
         val progressIds = progressList.map { it.wordId }.toSet()
         val excludedIds = dueWords.map { it.id }.toSet() + earlyReviewWords.map { it.id }.toSet()
         val newWords = sourceWords
@@ -495,7 +528,10 @@ class WordRepository(private val database: AppDatabase) {
         }
 
         val reviewWords = dueWords + earlyReviewWords
-        return mixReviewAndNewWords(reviewWords, orderedNewWords)
+        return StudyQueueSnapshot(
+            queue = mixReviewAndNewWords(reviewWords, orderedNewWords),
+            dueCount = dueCount
+        )
     }
 
     fun getEarlyReviewCountFlow(bookId: Long): Flow<Int> = earlyReviewDao.getCountFlow(bookId)
@@ -655,23 +691,9 @@ class WordRepository(private val database: AppDatabase) {
         }
     }
 
-    suspend fun getTodayNewWordsCount(): Int {
+    private suspend fun getTodayNewWordsCount(): Int {
         val today = currentLearningDate().format(DATE_FORMATTER)
         return dailyStatsDao.getByDate(today)?.newWordsCount ?: 0
-    }
-
-    suspend fun estimateRemainingNewWordsToday(book: Book, dailyLimit: Int): Int {
-        if (book.type == Book.TYPE_NEW_WORDS) return Int.MAX_VALUE
-        val todayLearned = getTodayNewWordsCount()
-        val remainingByDailyLimit = (dailyLimit - todayLearned).coerceAtLeast(0)
-        if (remainingByDailyLimit == 0) return 0
-        val sourceWords = wordDao.getWordsByBookList(book.id)
-        if (sourceWords.isEmpty()) return 0
-        val globalProgressIds = progressDao.getProgressByWordIds(sourceWords.map { it.id })
-            .map { it.wordId }
-            .toSet()
-        val remainingInBook = sourceWords.count { it.id !in globalProgressIds }
-        return minOf(remainingByDailyLimit, remainingInBook)
     }
 
     // ---- Utility ----
@@ -702,8 +724,13 @@ class WordRepository(private val database: AppDatabase) {
             bookDao.updateTotalCount(bookId, 0)
             return
         }
-        val existingWordKeys = wordDao.getWordsByBookList(bookId)
-            .map { normalizeWordKey(it.word) }
+
+        val currentCount = wordDao.getWordCount(bookId)
+        if (currentCount == drafts.size) {
+            return
+        }
+
+        val existingWordKeys = wordDao.getWordKeysByBook(bookId)
             .toSet()
         val toInsert = drafts
             .filter { normalizeWordKey(it.word) !in existingWordKeys }
@@ -746,12 +773,61 @@ class WordRepository(private val database: AppDatabase) {
 
     private suspend fun upsertDraftsForBook(bookId: Long, drafts: List<WordDraft>) {
         if (drafts.isEmpty()) return
-        val contents = ArrayList<BookWordContent>(drafts.size)
-        val linkedWordIds = LinkedHashSet<Long>(drafts.size)
+
+        val normalizedDrafts = LinkedHashMap<String, WordDraft>(drafts.size)
         drafts.forEach { draft ->
+            val key = normalizeWordKey(draft.word)
+            if (key.isBlank() || normalizedDrafts.containsKey(key)) {
+                return@forEach
+            }
+            normalizedDrafts[key] = draft
+        }
+        if (normalizedDrafts.isEmpty()) return
+
+        val wordIdsByKey = HashMap<String, Long>(normalizedDrafts.size)
+        normalizedDrafts.keys
+            .toList()
+            .chunked(MAX_DB_IN_CLAUSE_SIZE)
+            .forEach { chunk ->
+                wordDao.getWordEntitiesByKeys(chunk).forEach { entity ->
+                    wordIdsByKey[entity.wordKey] = entity.id
+                    val draft = normalizedDrafts[entity.wordKey] ?: return@forEach
+                    val phonetic = draft.phonetic.trim()
+                    if (entity.phonetic.isBlank() && phonetic.isNotBlank()) {
+                        wordDao.updatePhonetic(entity.id, phonetic)
+                    }
+                }
+            }
+
+        normalizedDrafts.forEach { (key, draft) ->
+            if (wordIdsByKey.containsKey(key)) {
+                return@forEach
+            }
             val rawWord = draft.word.trim()
-            if (rawWord.isBlank()) return@forEach
-            val wordId = getOrCreateWordId(rawWord, draft.phonetic.trim())
+            if (rawWord.isBlank()) {
+                return@forEach
+            }
+            val insertedId = wordDao.insertWordEntity(
+                WordEntity(
+                    word = rawWord,
+                    wordKey = key,
+                    phonetic = draft.phonetic.trim()
+                )
+            )
+            val resolvedWordId = if (insertedId > 0) {
+                insertedId
+            } else {
+                wordDao.getWordIdByKey(key)
+            }
+            if (resolvedWordId != null) {
+                wordIdsByKey[key] = resolvedWordId
+            }
+        }
+
+        val contents = ArrayList<BookWordContent>(normalizedDrafts.size)
+        val linkedWordIds = LinkedHashSet<Long>(normalizedDrafts.size)
+        normalizedDrafts.forEach { (key, draft) ->
+            val wordId = wordIdsByKey[key] ?: return@forEach
             linkedWordIds.add(wordId)
             contents.add(
                 BookWordContent(
@@ -773,21 +849,27 @@ class WordRepository(private val database: AppDatabase) {
 
     private suspend fun syncBookProgressWithGlobal(bookId: Long, wordIds: Collection<Long>) {
         if (wordIds.isEmpty()) return
-        val globalProgressByWordId = progressDao.getProgressByWordIds(wordIds.toList())
+
+        val distinctWordIds = wordIds.distinct()
+        val globalProgressByWordId = progressDao.getProgressByWordIds(distinctWordIds)
             .groupBy { it.wordId }
             .mapValues { (_, grouped) ->
-                grouped.maxWithOrNull(
-                    compareBy<Progress> { it.reviewCount }
-                        .thenBy { it.nextReviewTime }
-                        .thenBy { it.id }
-                )
+                grouped.maxWithOrNull(PROGRESS_PRIORITY_COMPARATOR)
             }
+        if (globalProgressByWordId.isEmpty()) return
 
+        val existingWordIds = HashSet<Long>()
+        distinctWordIds.chunked(MAX_DB_IN_CLAUSE_SIZE).forEach { chunk ->
+            existingWordIds.addAll(progressDao.getProgressWordIdsByBookAndWordIds(bookId, chunk))
+        }
+
+        val toInsert = ArrayList<Progress>(globalProgressByWordId.size)
         globalProgressByWordId.forEach { (wordId, globalProgress) ->
             val resolvedProgress = globalProgress ?: return@forEach
-            val existingByBook = progressDao.getProgress(wordId, bookId)
-            if (existingByBook != null) return@forEach
-            progressDao.insert(
+            if (existingWordIds.contains(wordId)) {
+                return@forEach
+            }
+            toInsert.add(
                 resolvedProgress.copy(
                     id = 0,
                     wordId = wordId,
@@ -795,31 +877,9 @@ class WordRepository(private val database: AppDatabase) {
                 )
             )
         }
-    }
-
-    private suspend fun getOrCreateWordId(rawWord: String, rawPhonetic: String): Long {
-        val key = normalizeWordKey(rawWord)
-        check(key.isNotBlank()) { "word key must not be blank" }
-        val existing = wordDao.getWordEntityByKey(key)
-        if (existing != null) {
-            if (existing.phonetic.isBlank() && rawPhonetic.isNotBlank()) {
-                wordDao.updatePhonetic(existing.id, rawPhonetic)
-            }
-            return existing.id
+        if (toInsert.isNotEmpty()) {
+            progressDao.insertAll(toInsert)
         }
-
-        val insertedId = wordDao.insertWordEntity(
-            WordEntity(
-                word = rawWord,
-                wordKey = key,
-                phonetic = rawPhonetic
-            )
-        )
-        if (insertedId > 0) {
-            return insertedId
-        }
-        return wordDao.getWordIdByKey(key)
-            ?: error("failed to resolve word id for key: $key")
     }
 
     private suspend fun updateNewWordsBookCount() {
@@ -877,11 +937,16 @@ class WordRepository(private val database: AppDatabase) {
 
     companion object {
         private const val DEFAULT_NEW_WORDS_LIMIT = 20
+        private const val MAX_DB_IN_CLAUSE_SIZE = 900
         private const val DAY_REFRESH_HOUR = 4
         private const val MASTERED_INTERVAL_DAYS_V4 = 30
         private const val MASTERED_MIN_REVIEW_COUNT_V4 = 4
         private const val MASTERED_MIN_EASE_V4 = 2.3f
         private val DATE_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE
+        private val PROGRESS_PRIORITY_COMPARATOR =
+            compareBy<Progress> { it.reviewCount }
+                .thenBy { it.nextReviewTime }
+                .thenBy { it.id }
     }
 }
 

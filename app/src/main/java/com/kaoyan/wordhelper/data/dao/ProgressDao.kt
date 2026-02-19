@@ -25,6 +25,9 @@ interface ProgressDao {
     @Query("SELECT * FROM tb_progress WHERE word_id IN (:wordIds)")
     suspend fun getProgressByWordIds(wordIds: List<Long>): List<Progress>
 
+    @Query("SELECT word_id FROM tb_progress WHERE book_id = :bookId AND word_id IN (:wordIds)")
+    suspend fun getProgressWordIdsByBookAndWordIds(bookId: Long, wordIds: List<Long>): List<Long>
+
     @Query("SELECT COUNT(*) FROM tb_progress WHERE book_id = :bookId AND status >= 1")
     fun getLearnedCount(bookId: Long): Flow<Int>
 
@@ -86,6 +89,9 @@ interface ProgressDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(progress: Progress): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(progresses: List<Progress>): List<Long>
 
     @Update
     suspend fun update(progress: Progress)

@@ -125,11 +125,22 @@ interface WordDao {
     @Query("SELECT COUNT(*) FROM tb_book_word_content WHERE book_id = :bookId")
     suspend fun getWordCount(bookId: Long): Int
 
+    @Query(
+        """SELECT w.word_key
+           FROM tb_book_word_content c
+           INNER JOIN tb_word w ON c.word_id = w.id
+           WHERE c.book_id = :bookId"""
+    )
+    suspend fun getWordKeysByBook(bookId: Long): List<String>
+
     @Query("SELECT DISTINCT book_id FROM tb_book_word_content WHERE word_id = :wordId")
     suspend fun getBookIdsByWordId(wordId: Long): List<Long>
 
     @Query("SELECT * FROM tb_word WHERE word_key = :wordKey LIMIT 1")
     suspend fun getWordEntityByKey(wordKey: String): WordEntity?
+
+    @Query("SELECT * FROM tb_word WHERE word_key IN (:wordKeys)")
+    suspend fun getWordEntitiesByKeys(wordKeys: List<String>): List<WordEntity>
 
     @Query("SELECT id FROM tb_word WHERE word_key = :wordKey LIMIT 1")
     suspend fun getWordIdByKey(wordKey: String): Long?

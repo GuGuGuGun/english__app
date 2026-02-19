@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -49,13 +49,14 @@ android {
     }
 }
 
-val syncWordbookFullAsset by tasks.registering(Copy::class) {
+val syncBuiltinWordbookAssets by tasks.registering(Copy::class) {
     from(rootProject.file("wordbook_full_from_e2c.json"))
+    from(rootProject.file("wordbook_full.json"))
     into(layout.buildDirectory.dir("generated/assets/main"))
 }
 
 tasks.named("preBuild").configure {
-    dependsOn(syncWordbookFullAsset)
+    dependsOn(syncBuiltinWordbookAssets)
 }
 
 dependencies {

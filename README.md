@@ -6,7 +6,7 @@
 
 - 学习模块：认词/拼写双模式，基于 SM2 调度，支持 V3 稳定 / V4 验证算法切换。
 - 查词模块：本地词典检索（英->中 / 中->英）与词条详情展示。
-- 词书模块：内置完整词库（`wordbook_full_from_e2c.json`）+ 自定义导入（TXT/CSV/自适应 JSON，兼容 maimemo-export `word,meaning` 连续流格式）。
+- 词书模块：内置双词库（`wordbook_full_from_e2c.json` + `wordbook_full.json`）+ 自定义导入（TXT/CSV/自适应 JSON，兼容 maimemo-export `word,meaning` 连续流格式）。
 - 发音实验室：内置词库音频优先，支持 Free Dictionary / Youdao 来源切换与认词模式自动发音。
 - 我的模块：学习统计、备份恢复、学习设置。
 - AI 实验室（可选）：支持预设服务商与自定义 OpenAI 兼容 `Base URL`，提供例句生成、助记生成、长句解析，并采用 Cache First 降低重复请求。
@@ -96,7 +96,9 @@ gradle/             # 版本目录与构建配置
 ## 更新日志
 
 ### 2026-02-19
-- 调整：内置词库文件切换为 `wordbook_full_from_e2c.json`，更大、更全的词库。
+- 调整：内置词库升级为双来源（`wordbook_full_from_e2c.json` + `wordbook_full.json`），启动后会生成两本预置词书。
+- 优化：大词库同步改为分块批量查重与批量写入，减少逐词数据库往返，提升启动阶段导入性能。
+- 优化：学习队列改为单次快照构建（同步返回队列与到期复习数），并将查词进度查询由逐词拉取改为批量映射，降低高频路径数据库开销。
 
 ### 2026-02-18
 - 新增：预置词书。

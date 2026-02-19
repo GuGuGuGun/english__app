@@ -56,9 +56,9 @@ class KaoyanWordApp : Application() {
             if (algorithmV4Enabled) {
                 repository.repairMasteredStatusForV4()
             }
-            val presetSeed = WordbookFullLoader.loadPreset(this@KaoyanWordApp).getOrNull()
-            if (presetSeed != null) {
-                repository.ensurePresetBooks(listOf(presetSeed))
+            val presetSeeds = WordbookFullLoader.loadPresets(this@KaoyanWordApp).getOrNull()
+            if (!presetSeeds.isNullOrEmpty()) {
+                repository.ensurePresetBooks(presetSeeds)
             }
         }
     }
