@@ -240,7 +240,7 @@ class WordRepository(private val database: AppDatabase) {
 
     suspend fun getGlobalProgressMap(wordIds: Collection<Long>): Map<Long, Progress> {
         if (wordIds.isEmpty()) return emptyMap()
-        val grouped = progressDao.getProgressByWordIds(wordIds.distinct())
+        val grouped = getProgressByWordIdsChunked(wordIds)
             .groupBy { it.wordId }
         val result = LinkedHashMap<Long, Progress>(grouped.size)
         grouped.forEach { (wordId, progressList) ->
@@ -978,7 +978,7 @@ class WordRepository(private val database: AppDatabase) {
         if (wordIds.isEmpty()) return
 
         val distinctWordIds = wordIds.distinct()
-        val globalProgressByWordId = progressDao.getProgressByWordIds(distinctWordIds)
+        val globalProgressByWordId = getProgressByWordIdsChunked(distinctWordIds)
             .groupBy { it.wordId }
             .mapValues { (_, grouped) ->
                 grouped.maxWithOrNull(PROGRESS_PRIORITY_COMPARATOR)
@@ -1054,6 +1054,17 @@ class WordRepository(private val database: AppDatabase) {
 
     private suspend fun invalidateForecastCacheInternal() {
         forecastCacheDao.clearAll()
+    }
+
+    private suspend fun getProgressByWordIdsChunked(wordIds: Collection<Long>): List<Progress> {
+        if (wordIds.isEmpty()) return emptyList()
+        val rows = ArrayList<Progress>()
+        wordIds.distinct()
+            .chunked(MAX_DB_IN_CLAUSE_SIZE)
+            .forEach { chunk ->
+                rows += progressDao.getProgressByWordIds(chunk)
+            }
+        return rows
     }
 
     private fun currentLearningDate(now: Long = System.currentTimeMillis()): LocalDate {

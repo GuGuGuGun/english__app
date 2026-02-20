@@ -80,9 +80,13 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -1482,15 +1486,34 @@ private fun WordCard(
     val normalizedWordLength = word.word.trim().length
     val displayWord = remember(word.word) { word.word.adaptiveWordText() }
     val typography = MaterialTheme.typography
-    val frontWordStyle = when {
-        normalizedWordLength <= 12 -> typography.displayLarge
-        normalizedWordLength <= 16 -> typography.displayMedium
-        normalizedWordLength <= 20 -> typography.headlineLarge
-        normalizedWordLength <= 24 -> typography.headlineMedium
-        normalizedWordLength <= 32 -> typography.titleLarge
-        normalizedWordLength <= 40 -> typography.titleMedium
-        else -> typography.titleSmall
+    val frontStyleCandidates = listOf(
+        typography.displayLarge,
+        typography.displayMedium,
+        typography.headlineLarge,
+        typography.headlineMedium,
+        typography.titleLarge,
+        typography.titleMedium,
+        typography.titleSmall,
+        typography.bodyLarge,
+        typography.bodyMedium,
+        typography.bodySmall,
+        typography.labelLarge
+    )
+    val preferredFrontStyleIndex = when {
+        normalizedWordLength <= 12 -> 0
+        normalizedWordLength <= 16 -> 1
+        normalizedWordLength <= 20 -> 2
+        normalizedWordLength <= 24 -> 3
+        normalizedWordLength <= 32 -> 4
+        normalizedWordLength <= 40 -> 5
+        normalizedWordLength <= 56 -> 6
+        normalizedWordLength <= 72 -> 7
+        normalizedWordLength <= 96 -> 8
+        normalizedWordLength <= 128 -> 9
+        else -> 10
     }
+    val frontWordStyle = frontStyleCandidates[preferredFrontStyleIndex]
+    val frontFallbackStyles = frontStyleCandidates.drop(preferredFrontStyleIndex + 1)
     val backWordStyle = when {
         normalizedWordLength <= 16 -> typography.titleLarge
         normalizedWordLength <= 24 -> typography.titleMedium
@@ -1501,7 +1524,8 @@ private fun WordCard(
         normalizedWordLength <= 20 -> 1
         normalizedWordLength <= 32 -> 2
         normalizedWordLength <= 48 -> 3
-        else -> 4
+        normalizedWordLength <= 72 -> 4
+        else -> 5
     }
     val backContentScrollState = rememberScrollState()
     LaunchedEffect(word.id) {
@@ -1598,7 +1622,7 @@ private fun WordCard(
                             rotationY = rotation
                             cameraDistance = 12f * density.density
                         },
-                    contentAlignment = Alignment.TopCenter
+                    contentAlignment = if (showFront) Alignment.Center else Alignment.TopCenter
                 ) {
                     if (showFront) {
                         Column(
@@ -1606,15 +1630,17 @@ private fun WordCard(
                                 .fillMaxWidth()
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Top)
+                            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)
                         ) {
-                            Text(
+                            AdaptiveWordText(
                                 text = displayWord,
-                                style = frontWordStyle,
-                                modifier = Modifier.fillMaxWidth(),
+                                preferredStyle = frontWordStyle,
+                                fallbackStyles = frontFallbackStyles,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 2.dp),
                                 textAlign = TextAlign.Center,
-                                maxLines = wordMaxLines,
-                                overflow = TextOverflow.Clip
+                                maxLines = wordMaxLines
                             )
                             if (word.phonetic.isNotBlank()) {
                                 Surface(
@@ -1783,9 +1809,56 @@ private fun WordExtraSection(
     }
 }
 
+@Composable
+private fun AdaptiveWordText(
+    text: String,
+    preferredStyle: TextStyle,
+    fallbackStyles: List<TextStyle>,
+    maxLines: Int,
+    modifier: Modifier = Modifier,
+    textAlign: TextAlign = TextAlign.Start
+) {
+    BoxWithConstraints(modifier = modifier) {
+        val density = LocalDensity.current
+        val textMeasurer = rememberTextMeasurer()
+        val availableWidthPx = with(density) { maxWidth.roundToPx() }.coerceAtLeast(1)
+        val styleCandidates = remember(preferredStyle, fallbackStyles) {
+            buildList {
+                add(preferredStyle)
+                fallbackStyles.forEach { style ->
+                    if (style != preferredStyle) {
+                        add(style)
+                    }
+                }
+            }
+        }
+        val finalStyle = remember(text, styleCandidates, maxLines, availableWidthPx) {
+            styleCandidates.firstOrNull { style ->
+                val layoutResult = textMeasurer.measure(
+                    text = AnnotatedString(text),
+                    style = style,
+                    maxLines = maxLines,
+                    overflow = TextOverflow.Clip,
+                    constraints = Constraints(maxWidth = availableWidthPx)
+                )
+                !layoutResult.hasVisualOverflow
+            } ?: styleCandidates.lastOrNull() ?: preferredStyle
+        }
+
+        Text(
+            text = text,
+            modifier = Modifier.fillMaxWidth(),
+            style = finalStyle,
+            textAlign = textAlign,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
 private fun String.adaptiveWordText(): String {
     val trimmed = trim()
-    if (trimmed.length <= 20) return trimmed
+    if (trimmed.length <= 12) return trimmed
     return trimmed.toCharArray().joinToString(separator = "\u200B")
 }
 
