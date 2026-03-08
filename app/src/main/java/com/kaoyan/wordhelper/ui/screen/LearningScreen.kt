@@ -103,6 +103,7 @@ import com.kaoyan.wordhelper.ui.theme.AlertRed
 import com.kaoyan.wordhelper.ui.theme.FuzzyYellow
 import com.kaoyan.wordhelper.ui.theme.KnownGreen
 import com.kaoyan.wordhelper.ui.viewmodel.LearningAiState
+import com.kaoyan.wordhelper.ui.viewmodel.LearningCheckInUiState
 import com.kaoyan.wordhelper.ui.viewmodel.LearningViewModel
 import com.kaoyan.wordhelper.util.PronunciationPlayer
 import com.kaoyan.wordhelper.util.rememberPronunciationPlayer
@@ -147,6 +148,7 @@ fun LearningScreen(
     val message by viewModel.message.collectAsStateWithLifecycle()
     val swipeSnackbarEvent by viewModel.swipeSnackbarEvent.collectAsStateWithLifecycle()
     val showSwipeGuide by viewModel.showSwipeGuide.collectAsStateWithLifecycle()
+    val checkInState by viewModel.checkInState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val pronunciationRepository = remember(context) {
         (context.applicationContext as KaoyanWordApp).pronunciationRepository
@@ -497,7 +499,17 @@ fun LearningScreen(
                         .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(text = "暂无单词", style = MaterialTheme.typography.bodyLarge)
+                    if (checkInState.showCompletionPanel) {
+                        LearningCompletionCheckInCard(
+                            state = checkInState,
+                            onCheckIn = viewModel::completeTodayCheckIn,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("learning_completion_checkin_card")
+                        )
+                    } else {
+                        Text(text = "暂无单词", style = MaterialTheme.typography.bodyLarge)
+                    }
                 }
             } else {
                 when (learningMode) {
@@ -624,6 +636,68 @@ private const val SM2_DESCRIPTION =
 private val RECOGNITION_SECTION_SPACING = 10.dp
 private const val SWIPE_TRIGGER_RATIO = 0.3f
 private const val SWIPE_ACTIVE_ZONE_RATIO = 0.8f
+
+@Composable
+private fun LearningCompletionCheckInCard(
+    state: LearningCheckInUiState,
+    onCheckIn: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(text = "今日背词完成", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(
+                text = if (state.checkedInToday) {
+                    if (state.todayCheckInTimeText.isNotBlank()) {
+                        "今日已打卡 · ${state.todayCheckInTimeText}"
+                    } else {
+                        "今日已打卡"
+                    }
+                } else {
+                    "今天的学习任务已经完成，点击完成今日打卡。"
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag("learning_completion_checkin_status")
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                CompletionMetric(label = "今日学习", value = state.todayStudyCount.toString(), unit = "词")
+                CompletionMetric(label = "连续打卡", value = state.streakDays.toString(), unit = "天")
+                CompletionMetric(label = "本周打卡", value = state.weekCheckInDays.toString(), unit = "天")
+            }
+            FilledTonalButton(
+                onClick = onCheckIn,
+                enabled = !state.checkedInToday,
+                modifier = Modifier.testTag("learning_completion_checkin_button")
+            ) {
+                Text(text = if (state.checkedInToday) "今日已打卡" else "完成今日打卡")
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompletionMetric(label: String, value: String, unit: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(text = label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(text = value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(text = unit, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
 
 enum class LearningMode {
     RECOGNITION,

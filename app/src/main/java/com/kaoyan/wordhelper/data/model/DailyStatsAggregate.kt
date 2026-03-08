@@ -19,5 +19,9 @@ data class DailyStatsAggregate(
     @ColumnInfo(name = "fuzzy_words_count")
     val fuzzyWordsCount: Int,
     @ColumnInfo(name = "recognized_words_count")
-    val recognizedWordsCount: Int
+    val recognizedWordsCount: Int,
+    @ColumnInfo(name = "check_in_count")
+    val checkInCount: Int,
+    @ColumnInfo(name = "last_check_in_time")
+    val lastCheckInTime: Long
 )

@@ -1,7 +1,6 @@
 ﻿package com.kaoyan.wordhelper
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -17,6 +16,7 @@ import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.data.model.StudyRating
 import com.kaoyan.wordhelper.data.model.WordDraft
+import com.kaoyan.wordhelper.util.DateUtils
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -59,7 +59,10 @@ class M12AcceptanceTest {
             }
             composeTestRule.activityRule.scenario.recreate()
             composeTestRule.waitForLearningWordCard()
-            composeTestRule.onNodeWithTag("learning_ai_bulb").assertDoesNotExist()
+            assertTrue(
+                "AI bulb should be hidden when AI is disabled",
+                composeTestRule.onAllNodesWithTag("learning_ai_bulb").fetchSemanticsNodes().isEmpty()
+            )
         } finally {
             runBlocking {
                 app.aiConfigRepository.saveConfig(originalConfig)
@@ -158,7 +161,7 @@ class M12AcceptanceTest {
         val app = composeTestRule.activity.application as KaoyanWordApp
         val originalBookId = runBlocking { app.database.bookDao().getActiveBook()?.id }
         val originalLimit = runBlocking { app.settingsRepository.settingsFlow.first().newWordsLimit }
-        val baselineTodayLearned = runBlocking { app.repository.getTodayNewWordsCount() }
+        val baselineTodayLearned = app.readTodayLearnedCount()
         val boostedLimit = (baselineTodayLearned + 20).coerceIn(5, 500)
         val importedBookName = "不认识计数回归_${System.currentTimeMillis()}"
         val drafts = (1..80).map { index ->
@@ -216,7 +219,7 @@ class M12AcceptanceTest {
         val app = composeTestRule.activity.application as KaoyanWordApp
         val originalBookId = runBlocking { app.database.bookDao().getActiveBook()?.id }
         val originalLimit = runBlocking { app.settingsRepository.settingsFlow.first().newWordsLimit }
-        val baselineTodayLearned = runBlocking { app.repository.getTodayNewWordsCount() }
+        val baselineTodayLearned = app.readTodayLearnedCount()
         val boostedLimit = (baselineTodayLearned + 10).coerceIn(5, 500)
         val presetBookId = runBlocking {
             app.database.bookDao().getAllBooksList().firstOrNull { it.type == Book.TYPE_PRESET }?.id
@@ -361,7 +364,7 @@ class M12AcceptanceTest {
         val app = composeTestRule.activity.application as KaoyanWordApp
         val originalBookId = runBlocking { app.database.bookDao().getActiveBook()?.id }
         val originalLimit = runBlocking { app.settingsRepository.settingsFlow.first().newWordsLimit }
-        val baselineTodayLearned = runBlocking { app.repository.getTodayNewWordsCount() }
+        val baselineTodayLearned = app.readTodayLearnedCount()
         val limitA = (baselineTodayLearned + 2).coerceIn(1, 500)
         val limitB = (baselineTodayLearned + 4).coerceIn(1, 500)
 
@@ -503,5 +506,10 @@ private fun ComposeTestRule.readLearningProgress(): Pair<Int, Int> {
     val index = match.groupValues[1].toIntOrNull() ?: -1
     val total = match.groupValues[2].toIntOrNull() ?: -1
     return index to total
+}
+
+private fun KaoyanWordApp.readTodayLearnedCount(): Int = runBlocking {
+    val today = DateUtils.currentLearningDate().format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
+    database.dailyStatsDao().getByDate(today)?.newWordsCount ?: 0
 }
 

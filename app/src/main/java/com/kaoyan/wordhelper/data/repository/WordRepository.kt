@@ -33,6 +33,12 @@ data class StudyQueueSnapshot(
     val dueCount: Int
 )
 
+enum class CheckInResult {
+    SUCCESS,
+    ALREADY_CHECKED_IN,
+    NOT_ELIGIBLE
+}
+
 class WordRepository(private val database: AppDatabase) {
     private val bookDao = database.bookDao()
     private val wordDao = database.wordDao()
@@ -783,6 +789,27 @@ class WordRepository(private val database: AppDatabase) {
         val start = startDate.format(DATE_FORMATTER)
         val end = endDate.format(DATE_FORMATTER)
         return dailyStatsDao.getAggregatedByDateRange(start, end)
+    }
+
+    suspend fun checkInToday(): CheckInResult {
+        return database.withTransaction {
+            val today = currentLearningDate().format(DATE_FORMATTER)
+            val existing = dailyStatsDao.getOrCreate(today)
+            if (existing.checkInCount > 0) {
+                return@withTransaction CheckInResult.ALREADY_CHECKED_IN
+            }
+            val todayActivityCount = existing.newWordsCount + existing.reviewWordsCount + existing.spellPracticeCount
+            if (todayActivityCount <= 0) {
+                return@withTransaction CheckInResult.NOT_ELIGIBLE
+            }
+            dailyStatsDao.update(
+                existing.copy(
+                    checkInCount = 1,
+                    lastCheckInTime = System.currentTimeMillis()
+                )
+            )
+            CheckInResult.SUCCESS
+        }
     }
 
     suspend fun recordSpellingResult(wordId: Long, bookId: Long, isCorrect: Boolean) {

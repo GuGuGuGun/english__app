@@ -12,6 +12,7 @@ import com.kaoyan.wordhelper.data.repository.ForecastDataSource
 import com.kaoyan.wordhelper.ml.features.FeatureVector
 import com.kaoyan.wordhelper.ml.ui.MemoryHeatmapEntry
 import com.kaoyan.wordhelper.util.PressureLevel
+import com.kaoyan.wordhelper.util.DateUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
@@ -157,8 +158,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), defaultMlInsights(DEFAULT_RETENTION))
 
     private val lineDataFlow = rangeFlow.flatMapLatest { range ->
-        val endDate = LocalDate.now(zoneId)
-        val startDate = endDate.minusDays(range.days - 1)
+        val (startDate, endDate) = DateUtils.learningDateRange(days = range.days, zoneId = zoneId)
         repository.getDailyStatsAggregated(startDate, endDate)
             .map { aggregates -> buildLineData(startDate, endDate, aggregates) }
     }
@@ -177,11 +177,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-    private val heatmapRange = run {
-        val end = LocalDate.now(zoneId)
-        val start = end.minusWeeks(11).with(DayOfWeek.MONDAY)
-        start to end
-    }
+    private val heatmapRange = DateUtils.learningHeatmapRange(zoneId = zoneId)
 
     private val heatmapFlow = repository.getDailyStatsAggregated(
         heatmapRange.first,
@@ -191,8 +187,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val gestureStatsFlow = rangeFlow.flatMapLatest { range ->
-        val endDate = LocalDate.now(zoneId)
-        val startDate = endDate.minusDays(range.days - 1)
+        val (startDate, endDate) = DateUtils.learningDateRange(days = range.days, zoneId = zoneId)
         repository.getDailyStatsAggregated(startDate, endDate)
             .map { aggregates ->
                 GestureStatsSummary(
@@ -202,10 +197,10 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    private val todayRecognitionFlow = repository.getDailyStatsAggregated(
-        LocalDate.now(zoneId),
-        LocalDate.now(zoneId)
-    ).map { aggregates ->
+    private val todayRecognitionFlow = run {
+        val today = DateUtils.currentLearningDate(zoneId = zoneId)
+        repository.getDailyStatsAggregated(today, today)
+    }.map { aggregates ->
         val todayAggregate = aggregates.firstOrNull()
         TodayRecognitionSummary(
             fuzzyCount = todayAggregate?.fuzzyWordsCount ?: 0,

@@ -33,7 +33,8 @@ class MigrationTest {
                 AppDatabase.MIGRATION_8_9,
                 AppDatabase.MIGRATION_9_10,
                 AppDatabase.MIGRATION_10_11,
-                AppDatabase.MIGRATION_11_12
+                AppDatabase.MIGRATION_11_12,
+                AppDatabase.MIGRATION_12_13
             )
             .build()
 
@@ -117,18 +118,24 @@ class MigrationTest {
             var hasGestureNotebook = false
             var hasFuzzyWords = false
             var hasRecognizedWords = false
+            var hasCheckInCount = false
+            var hasLastCheckInTime = false
             while (cursor.moveToNext()) {
                 when (cursor.getString(1)) {
                     "gesture_easy_count" -> hasGestureEasy = true
                     "gesture_notebook_count" -> hasGestureNotebook = true
                     "fuzzy_words_count" -> hasFuzzyWords = true
                     "recognized_words_count" -> hasRecognizedWords = true
+                    "check_in_count" -> hasCheckInCount = true
+                    "last_check_in_time" -> hasLastCheckInTime = true
                 }
             }
             assertTrue(hasGestureEasy)
             assertTrue(hasGestureNotebook)
             assertTrue(hasFuzzyWords)
             assertTrue(hasRecognizedWords)
+            assertTrue(hasCheckInCount)
+            assertTrue(hasLastCheckInTime)
         }
 
         migratedDb.query("SELECT word, word_key, phonetic FROM tb_word WHERE id = 1").use { cursor ->

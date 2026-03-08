@@ -28,7 +28,9 @@ interface DailyStatsDao {
                SUM(gesture_easy_count) AS gesture_easy_count,
                SUM(gesture_notebook_count) AS gesture_notebook_count,
                SUM(fuzzy_words_count) AS fuzzy_words_count,
-               SUM(recognized_words_count) AS recognized_words_count
+               SUM(recognized_words_count) AS recognized_words_count,
+               SUM(check_in_count) AS check_in_count,
+               MAX(last_check_in_time) AS last_check_in_time
         FROM tb_daily_stats
         WHERE date BETWEEN :startDate AND :endDate
         GROUP BY date

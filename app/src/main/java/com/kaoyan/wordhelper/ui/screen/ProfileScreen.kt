@@ -252,6 +252,7 @@ private fun StatsCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 StatItem(label = "连续打卡", value = "${stats.streakDays}", unit = "天")
+                StatItem(label = "本周打卡", value = "${stats.weekCheckInDays}", unit = "天")
                 StatItem(label = "近7天学习", value = "${stats.weekStudyCount}", unit = "次")
                 StatItem(label = "今日学习", value = "${stats.todayStudyCount}", unit = "次")
             }

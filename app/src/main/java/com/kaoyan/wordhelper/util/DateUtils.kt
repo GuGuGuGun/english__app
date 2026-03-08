@@ -1,6 +1,7 @@
 package com.kaoyan.wordhelper.util
 
 import java.time.Instant
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -76,6 +77,26 @@ object DateUtils {
         zoneId: ZoneId = ZoneId.systemDefault()
     ): LocalDate {
         return toLearningDate(now, zoneId)
+    }
+
+    fun learningDateRange(
+        days: Long,
+        now: Long = System.currentTimeMillis(),
+        zoneId: ZoneId = ZoneId.systemDefault()
+    ): Pair<LocalDate, LocalDate> {
+        val end = currentLearningDate(now, zoneId)
+        val start = end.minusDays(days - 1)
+        return start to end
+    }
+
+    fun learningHeatmapRange(
+        now: Long = System.currentTimeMillis(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+        weeks: Long = 11
+    ): Pair<LocalDate, LocalDate> {
+        val end = currentLearningDate(now, zoneId)
+        val start = end.minusWeeks(weeks).with(DayOfWeek.MONDAY)
+        return start to end
     }
 
     private fun daysBetweenByRefreshDay(now: Long, target: Long, zoneId: ZoneId): Long {

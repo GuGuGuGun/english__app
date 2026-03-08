@@ -8,10 +8,12 @@ import com.kaoyan.wordhelper.data.entity.Book
 import com.kaoyan.wordhelper.data.model.AIContentType
 import com.kaoyan.wordhelper.data.entity.Progress
 import com.kaoyan.wordhelper.data.entity.Word
+import com.kaoyan.wordhelper.data.model.DailyStatsAggregate
 import com.kaoyan.wordhelper.data.model.PronunciationSource
 import com.kaoyan.wordhelper.data.model.SpellingOutcome
 import com.kaoyan.wordhelper.data.model.StudyRating
 import com.kaoyan.wordhelper.data.repository.AddToNewWordsSource
+import com.kaoyan.wordhelper.data.repository.CheckInResult
 import com.kaoyan.wordhelper.data.repository.TodayNewWordsPlan
 import com.kaoyan.wordhelper.ml.core.AdaptiveResponseThreshold
 import com.kaoyan.wordhelper.ml.integration.MLEnhancedScheduler
@@ -37,6 +39,7 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 data class LearningAiState(
@@ -50,6 +53,15 @@ data class LearningAiState(
     val isAvailable: Boolean
         get() = isEnabled && isConfigured
 }
+
+data class LearningCheckInUiState(
+    val showCompletionPanel: Boolean = false,
+    val checkedInToday: Boolean = false,
+    val streakDays: Int = 0,
+    val weekCheckInDays: Int = 0,
+    val todayStudyCount: Int = 0,
+    val todayCheckInTimeText: String = ""
+)
 
 data class SwipeSnackbarEvent(
     val id: Long,
@@ -111,6 +123,10 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
     val swipeSnackbarEvent: StateFlow<SwipeSnackbarEvent?> = _swipeSnackbarEvent.asStateFlow()
     private val _recognitionAutoPronounceEvents = MutableSharedFlow<Long>(extraBufferCapacity = 1)
     val recognitionAutoPronounceEvents: SharedFlow<Long> = _recognitionAutoPronounceEvents.asSharedFlow()
+    private val learningWeekRange = DateUtils.learningDateRange(days = 7)
+    private val learningHeatmapRange = DateUtils.learningHeatmapRange()
+    private val learningWeekStatsFlow = repository.getDailyStatsAggregated(learningWeekRange.first, learningWeekRange.second)
+    private val learningHeatmapStatsFlow = repository.getDailyStatsAggregated(learningHeatmapRange.first, learningHeatmapRange.second)
 
     val showSwipeGuide: StateFlow<Boolean> = settingsRepository.settingsFlow
         .map { !it.swipeGestureGuideShown }
@@ -201,6 +217,19 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
             book.type != Book.TYPE_NEW_WORDS &&
             dueCount > cap
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    val checkInState: StateFlow<LearningCheckInUiState> = combine(
+        learningWeekStatsFlow,
+        learningHeatmapStatsFlow,
+        _currentWord,
+        _totalCount
+    ) { weekAggregates, heatmapAggregates, currentWord, totalCount ->
+        buildLearningCheckInUiState(
+            weekAggregates = weekAggregates,
+            heatmapAggregates = heatmapAggregates,
+            currentWord = currentWord,
+            totalCount = totalCount
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LearningCheckInUiState())
 
     private var cachedResponseThresholdMs: Long = RESPONSE_TIME_DOWNGRADE_THRESHOLD_MS
 
@@ -736,6 +765,16 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         _message.value = null
     }
 
+    fun completeTodayCheckIn() {
+        launchSubmit {
+            when (withContext(Dispatchers.IO) { repository.checkInToday() }) {
+                CheckInResult.SUCCESS -> _message.value = "打卡成功，明天继续保持"
+                CheckInResult.ALREADY_CHECKED_IN -> _message.value = "今天已经打过卡了"
+                CheckInResult.NOT_ELIGIBLE -> _message.value = "请先完成今日背词再打卡"
+            }
+        }
+    }
+
     private suspend fun loadQueueForBook(
         book: Book?,
         newWordsLimit: Int,
@@ -935,4 +974,54 @@ class LearningViewModel(application: Application) : AndroidViewModel(application
         private const val RESPONSE_TIME_DOWNGRADE_THRESHOLD_MS = 6_000L
         private val DATE_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE
     }
+}
+
+internal fun shouldShowCompletionCheckInPanel(currentWord: Word?, totalCount: Int): Boolean {
+    return currentWord == null && totalCount > 0
+}
+
+internal fun buildLearningCheckInUiState(
+    weekAggregates: List<DailyStatsAggregate>,
+    heatmapAggregates: List<DailyStatsAggregate>,
+    currentWord: Word?,
+    totalCount: Int,
+    today: LocalDate = DateUtils.currentLearningDate()
+): LearningCheckInUiState {
+    val todayAggregate = weekAggregates.firstOrNull { parseLearningAggregateDate(it.date) == today }
+    val todayCheckedIn = (todayAggregate?.checkInCount ?: 0) > 0
+    val weekCheckInDays = weekAggregates.count { it.checkInCount > 0 }
+    val checkInDates = heatmapAggregates.filter { it.checkInCount > 0 }
+        .mapNotNull { parseLearningAggregateDate(it.date) }
+        .toSet()
+    val streakDays = computeLearningCheckInStreak(today, checkInDates)
+    val todayStudyCount = todayAggregate?.let {
+        it.newWordsCount + it.reviewWordsCount + it.spellPracticeCount
+    } ?: 0
+    val todayCheckInTimeText = if (todayCheckedIn && (todayAggregate?.lastCheckInTime ?: 0L) > 0L) {
+        DateUtils.formatDateTime(todayAggregate?.lastCheckInTime ?: 0L)
+    } else {
+        ""
+    }
+    return LearningCheckInUiState(
+        showCompletionPanel = shouldShowCompletionCheckInPanel(currentWord, totalCount),
+        checkedInToday = todayCheckedIn,
+        streakDays = streakDays,
+        weekCheckInDays = weekCheckInDays,
+        todayStudyCount = todayStudyCount,
+        todayCheckInTimeText = todayCheckInTimeText
+    )
+}
+
+private fun parseLearningAggregateDate(raw: String): LocalDate? {
+    return runCatching { LocalDate.parse(raw, DateTimeFormatter.ISO_LOCAL_DATE) }.getOrNull()
+}
+
+private fun computeLearningCheckInStreak(today: LocalDate, checkInDates: Set<LocalDate>): Int {
+    var streak = 0
+    var cursor = today
+    while (checkInDates.contains(cursor)) {
+        streak += 1
+        cursor = cursor.minusDays(1)
+    }
+    return streak
 }

@@ -28,5 +28,9 @@ data class DailyStats(
     @ColumnInfo(name = "fuzzy_words_count")
     val fuzzyWordsCount: Int = 0,
     @ColumnInfo(name = "recognized_words_count")
-    val recognizedWordsCount: Int = 0
+    val recognizedWordsCount: Int = 0,
+    @ColumnInfo(name = "check_in_count")
+    val checkInCount: Int = 0,
+    @ColumnInfo(name = "last_check_in_time")
+    val lastCheckInTime: Long = 0L
 )

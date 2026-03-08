@@ -54,7 +54,7 @@ import kotlinx.coroutines.launch
         TrainingSample::class,
         WordMLStats::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -99,7 +99,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_8_9,
                     MIGRATION_9_10,
                     MIGRATION_10_11,
-                    MIGRATION_11_12
+                    MIGRATION_11_12,
+                    MIGRATION_12_13
                 )
                 .build()
         }
@@ -599,6 +600,24 @@ abstract class AppDatabase : RoomDatabase() {
                         review_count INTEGER NOT NULL DEFAULT 0
                     )
                     """.trimIndent()
+                )
+            }
+        }
+
+        @VisibleForTesting
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureColumnExists(
+                    db = db,
+                    table = "tb_daily_stats",
+                    column = "check_in_count",
+                    definition = "INTEGER NOT NULL DEFAULT 0"
+                )
+                ensureColumnExists(
+                    db = db,
+                    table = "tb_daily_stats",
+                    column = "last_check_in_time",
+                    definition = "INTEGER NOT NULL DEFAULT 0"
                 )
             }
         }

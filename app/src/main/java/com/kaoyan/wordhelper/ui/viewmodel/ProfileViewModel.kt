@@ -10,6 +10,7 @@ import com.kaoyan.wordhelper.data.model.AIPresets
 import com.kaoyan.wordhelper.data.repository.DarkMode
 import com.kaoyan.wordhelper.data.repository.UserSettings
 import com.kaoyan.wordhelper.util.DatabaseBackupManager
+import com.kaoyan.wordhelper.util.DateUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +28,10 @@ data class ProfileStats(
     val weekStudyCount: Int,
     val todaySpellCount: Int,
     val weekSpellCount: Int,
+    val todayCheckedIn: Boolean,
+    val todayManualCheckedIn: Boolean,
+    val weekCheckInDays: Int,
+    val todayCheckInTimeText: String,
     val weekLineData: List<LineChartEntry>,
     val heatmap: List<HeatmapCell>
 )
@@ -46,17 +51,9 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     val settings: StateFlow<UserSettings> = settingsRepository.settingsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UserSettings())
 
-    private val weekRange = run {
-        val end = LocalDate.now()
-        val start = end.minusDays(6)
-        start to end
-    }
+    private val weekRange = DateUtils.learningDateRange(days = 7)
 
-    private val heatmapRange = run {
-        val end = LocalDate.now()
-        val start = end.minusWeeks(11).with(DayOfWeek.MONDAY)
-        start to end
-    }
+    private val heatmapRange = DateUtils.learningHeatmapRange()
 
     private val weekStatsFlow = repository.getDailyStatsAggregated(weekRange.first, weekRange.second)
     private val heatmapStatsFlow = repository.getDailyStatsAggregated(heatmapRange.first, heatmapRange.second)
@@ -176,24 +173,36 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         weekAggregates: List<DailyStatsAggregate>,
         heatmapAggregates: List<DailyStatsAggregate>
     ): ProfileStats {
-        val today = LocalDate.now()
+        val today = DateUtils.currentLearningDate()
         val weekLineData = buildLineData(weekRange.first, weekRange.second, weekAggregates)
         val todayAggregate = weekAggregates.firstOrNull { parseDate(it.date) == today }
-        val todayStudyCount = todayAggregate?.let { totalCount(it) } ?: 0
+        val todayStudyCount = todayAggregate?.let { activityCount(it) } ?: 0
         val todaySpellCount = todayAggregate?.spellPracticeCount ?: 0
-        val weekStudyCount = weekAggregates.sumOf { totalCount(it) }
+        val weekStudyCount = weekAggregates.sumOf { activityCount(it) }
         val weekSpellCount = weekAggregates.sumOf { it.spellPracticeCount }
         val heatmap = buildHeatmap(heatmapRange.first, heatmapRange.second, heatmapAggregates)
-        val studyDates = heatmapAggregates.filter { totalCount(it) > 0 }
+        val checkInDates = heatmapAggregates.filter { isCheckedIn(it) }
             .mapNotNull { parseDate(it.date) }
             .toSet()
-        val streakDays = computeStreak(today, studyDates)
+        val streakDays = computeStreak(today, checkInDates)
+        val todayCheckedIn = todayAggregate?.let { isCheckedIn(it) } ?: false
+        val todayManualCheckedIn = (todayAggregate?.checkInCount ?: 0) > 0
+        val weekCheckInDays = weekAggregates.count { isCheckedIn(it) }
+        val todayCheckInTimeText = if (todayManualCheckedIn && (todayAggregate?.lastCheckInTime ?: 0L) > 0L) {
+            DateUtils.formatDateTime(todayAggregate?.lastCheckInTime ?: 0L)
+        } else {
+            ""
+        }
         return ProfileStats(
             streakDays = streakDays,
             todayStudyCount = todayStudyCount,
             weekStudyCount = weekStudyCount,
             todaySpellCount = todaySpellCount,
             weekSpellCount = weekSpellCount,
+            todayCheckedIn = todayCheckedIn,
+            todayManualCheckedIn = todayManualCheckedIn,
+            weekCheckInDays = weekCheckInDays,
+            todayCheckInTimeText = todayCheckInTimeText,
             weekLineData = weekLineData,
             heatmap = heatmap
         )
@@ -231,14 +240,14 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         val map = aggregates.mapNotNull { aggregate ->
             parseDate(aggregate.date)?.let { it to aggregate }
         }.toMap()
-        val maxCount = aggregates.maxOfOrNull { aggregate -> totalCount(aggregate) } ?: 0
+        val maxCount = aggregates.maxOfOrNull { aggregate -> activityCount(aggregate) } ?: 0
         val displayEnd = endDate.with(DayOfWeek.SUNDAY)
         val result = mutableListOf<HeatmapCell>()
         var cursor = startDate
         while (!cursor.isAfter(displayEnd)) {
             val inRange = !cursor.isAfter(endDate)
             val aggregate = if (inRange) map[cursor] else null
-            val count = aggregate?.let { totalCount(it) } ?: 0
+            val count = aggregate?.let { activityCount(it) } ?: 0
             val level = if (inRange) computeLevel(count, maxCount) else 0
             result.add(
                 HeatmapCell(
@@ -274,8 +283,12 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         return streak
     }
 
-    private fun totalCount(aggregate: DailyStatsAggregate): Int {
+    private fun activityCount(aggregate: DailyStatsAggregate): Int {
         return aggregate.newWordsCount + aggregate.reviewWordsCount + aggregate.spellPracticeCount
+    }
+
+    private fun isCheckedIn(aggregate: DailyStatsAggregate): Boolean {
+        return aggregate.checkInCount > 0
     }
 
     private fun parseDate(raw: String): LocalDate? {
@@ -289,6 +302,10 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             weekStudyCount = 0,
             todaySpellCount = 0,
             weekSpellCount = 0,
+            todayCheckedIn = false,
+            todayManualCheckedIn = false,
+            weekCheckInDays = 0,
+            todayCheckInTimeText = "",
             weekLineData = emptyList(),
             heatmap = emptyList()
         )
